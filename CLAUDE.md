@@ -785,6 +785,22 @@ board.
 
 ### Operational notes
 
+- **`/capture` returns a STALE frame, and it caused the agent to act on the
+  past.** The firmware ran `CAMERA_GRAB_WHEN_EMPTY` with `fb_count = 2`, which
+  makes `esp_camera_fb_get` hand back the **oldest queued** frame rather than
+  the newest. The driver refills a buffer as soon as one is free, so between
+  captures a frame sits in the queue ageing, and the first capture after the
+  car moves shows where it used to be.
+
+  Found 2026-09-08. The agent scanned, saw nothing, turned 90 degrees, then
+  announced it had found its target and drove at empty floor: the frame it was
+  shown had been taken before the turn. It read as a judgement error and was
+  not one.
+
+  Fixed in both places. The firmware now uses `CAMERA_GRAB_LATEST`, and
+  `Car.capture` drains `CAPTURE_DISCARD` frames first so a car running an older
+  flash is still correct. Set `CAPTURE_DISCARD = 0` once the car is reflashed;
+  each discarded frame costs about 50 ms.
 - **Discard the first frame or two after camera init.** The first capture comes
   out with a heavy green cast; auto white balance settles within about three
   frames.

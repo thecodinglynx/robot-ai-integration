@@ -314,7 +314,13 @@ static bool startCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = XCLK_HZ;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  // LATEST, not WHEN_EMPTY. With two buffers, WHEN_EMPTY hands back the
+  // OLDEST queued frame: the driver refills a buffer as soon as one is free,
+  // so a frame sits in the queue ageing between captures and the first
+  // /capture after the car moves shows where it used to be. On 2026-09-08 the
+  // agent turned 90 degrees, was shown the previous view, announced it had
+  // found its target and drove at empty floor.
+  config.grab_mode = CAMERA_GRAB_LATEST;
 
   // Elegoo allocate at UXGA so the buffers are big enough for anything, then
   // drop the running size afterwards. Same here.

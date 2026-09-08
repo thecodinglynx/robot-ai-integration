@@ -119,6 +119,12 @@ UNTAGGED_REPLY_COMMANDS = frozenset({int(N.STOP)})
 # it is a scale error rather than a datum error.
 RAW_TO_CM = 1.296
 
+# How many frames to throw away before keeping one. See `Car.capture`: the
+# camera hands back the oldest queued frame, so the first one after any
+# movement shows where the car used to be. Two drains a two-buffer queue.
+# Set to 0 once the car is running firmware with CAMERA_GRAB_LATEST.
+CAPTURE_DISCARD = 2
+
 # The reading saturates here. Not a distance: it means at least ~195 cm or no
 # echo at all, and the two are indistinguishable.
 RAW_CEILING = 150
@@ -957,9 +963,30 @@ class Car:
         with urllib.request.urlopen(url, timeout=self.config.http_timeout) as r:
             return r.read()
 
-    def capture(self) -> bytes:
+    def capture(self, discard: int = CAPTURE_DISCARD) -> bytes:
         """One still frame as JPEG bytes. A single still per decision is all
-        the model needs, which sidesteps stream frame rate entirely."""
+        the model needs, which sidesteps stream frame rate entirely.
+
+        **`discard` is not optional politeness, it is a correctness fix.** The
+        camera firmware runs two frame buffers with `CAMERA_GRAB_WHEN_EMPTY`,
+        which means `esp_camera_fb_get` returns the OLDEST queued frame rather
+        than the newest. The driver refills a buffer as soon as one is free, so
+        between captures a frame sits in the queue ageing, and the first
+        `/capture` after the car has moved returns a picture taken **before**
+        it moved.
+
+        That is not a theoretical worry. On 2026-09-08 the agent scanned, saw
+        nothing, turned 90 degrees, and then reported finding its target and
+        drove at it. The target was where the car had been pointing one turn
+        earlier: the model was shown a stale frame and acted on the past.
+
+        Draining the queue costs about 50 ms a frame and is worth it. The real
+        fix is `CAMERA_GRAB_LATEST` in the firmware, after which this can go
+        back to zero; the firmware in this repository has it, but a car running
+        an older flash does not.
+        """
+        for _ in range(max(0, discard)):
+            self._http("/capture")
         return self._http("/capture")
 
     def capture_to(self, path: str) -> str:

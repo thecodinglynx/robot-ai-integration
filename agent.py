@@ -744,11 +744,19 @@ def main() -> int:
 
                     content: List[Dict[str, Any]] = []
                     frame_name = None
-                    if outcome.frame:
-                        frame_name = log.frame(turn, outcome.frame)
                     body = f"{outcome.text}\n\n{pilot.sensors()}"
                     content.append({"type": "text", "text": body})
-                    if outcome.frame:
+                    if outcome.frames:
+                        # scan brings back several labelled views
+                        names = []
+                        for i, (label, jpeg) in enumerate(outcome.frames):
+                            names.append(log.frame(turn, jpeg, f"scan{i}"))
+                            content.append({"type": "text",
+                                            "text": f"[{label}]"})
+                            content.append(image_block(jpeg))
+                        frame_name = ", ".join(names)
+                    elif outcome.frame:
+                        frame_name = log.frame(turn, outcome.frame)
                         content.append(image_block(outcome.frame))
 
                     results.append({"type": "tool_result",
