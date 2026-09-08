@@ -1,0 +1,49 @@
+# Wifi credentials. secrets.h.example is the template; secrets.h is yours.
+firmware/elegoo_cam_station/secrets.h
+
+# Agent run logs. Every run writes frames of whatever room the car was in,
+# which is a photographic record of somebody's home. Keep them locally.
+runs/
+
+# Photographs of the build, and camera captures from the calibration runs.
+selfies/
+*.jpg
+
+# Elegoo's official download bundle, 262 MB. Their copyright, not ours to
+# redistribute, and it is a free download from elegoo.com. The camera source
+# in it is ground truth for the pin map, so get your own copy: see the
+# References section of CLAUDE.md.
+elegoo-docs/
+
+# A 4 MB dump of the stock camera firmware, read off this specific chip. Keep
+# your own backup before you flash anything; do not rely on someone else's.
+*.bin
+
+# Local tooling
+ant/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# One-off diagnostics from a long day of chasing a car that would not drive
+# straight, would not stop, and then would not turn. What each of them found
+# is written up in CLAUDE.md, which is the part worth keeping; the scripts
+# themselves were disposable and several were built on wrong theories.
+stop_probe.py
+wedge_probe.py
+stop_diff.py
+motor_map_test.py
+straight_test.py
+turn_test.py
+elegoo_probe.py
+capture_serial.py
+smoke_test.py
+firmware/camera_pin_probe/
+
+# Raw session logs. The measurements taken from them are in CLAUDE.md.
+*.txt
+!requirements.txt
+
+# Superseded background research. CLAUDE.md wins where the two disagree.
+feasibility-report.html
