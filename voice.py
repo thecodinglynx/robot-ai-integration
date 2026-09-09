@@ -174,24 +174,52 @@ class PowerShellSink(Sink):
 
     name = "powershell"
 
+    # The voice name comes in through the environment rather than being pasted
+    # into the script, so a name with a quote in it cannot break or extend the
+    # command. SelectVoice throws on an unknown name, so it is matched loosely
+    # against the installed list and skipped if nothing matches: a wrong
+    # --voice should mean the default voice, not a silent run.
     SCRIPT = (
         "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new(); "
         "Add-Type -AssemblyName System.Speech; "
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-        "$s.Rate = $env:VOICE_RATE; "
+        "$s.Rate = [int]$env:VOICE_RATE; "
+        "if ($env:VOICE_NAME) { "
+        "  $m = $s.GetInstalledVoices() | "
+        "       ? { $_.VoiceInfo.Name -like \"*$env:VOICE_NAME*\" } | "
+        "       select -First 1; "
+        "  if ($m) { $s.SelectVoice($m.VoiceInfo.Name) } } "
         "$s.Speak([Console]::In.ReadToEnd())"
     )
 
-    def __init__(self, rate: Optional[int] = None):
+    LIST = (
+        "Add-Type -AssemblyName System.Speech; "
+        "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
+        ".GetInstalledVoices() | "
+        "% { $_.VoiceInfo.Name + '  (' + $_.VoiceInfo.Culture + ', ' "
+        "    + $_.VoiceInfo.Gender + ')' }"
+    )
+
+    def __init__(self, rate: Optional[int] = None,
+                 voice: Optional[str] = None):
         self.exe = shutil.which("powershell") or shutil.which("pwsh")
         if not self.exe:
             raise RuntimeError("no powershell on PATH")
         # System.Speech rates run -10 to 10, unlike pyttsx3's words per minute.
         self.rate = 0 if rate is None else max(-10, min(10, (rate - 200) // 20))
+        self.voice = voice or ""
+
+    def installed(self):
+        out = subprocess.run([self.exe, "-NoProfile", "-NonInteractive",
+                              "-Command", self.LIST],
+                             capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=30)
+        return [l.strip() for l in out.stdout.splitlines() if l.strip()]
 
     def speak(self, text: str) -> None:
         import os
-        env = dict(os.environ, VOICE_RATE=str(self.rate))
+        env = dict(os.environ, VOICE_RATE=str(self.rate),
+                   VOICE_NAME=self.voice)
         # utf-8 with errors="replace" rather than the console default, which
         # is cp1252 on Windows and cannot carry a degree sign. `shorten` has
         # already stripped anything unpronounceable; this is the second line
@@ -241,7 +269,7 @@ def best_sink(rate: Optional[int] = None,
     except Exception:
         pass
     try:
-        return PowerShellSink(rate=rate)
+        return PowerShellSink(rate=rate, voice=voice)
     except Exception:
         return None
 
@@ -342,15 +370,55 @@ class Voice:
         return False
 
 
+def list_voices():
+    """Print what the speech engine can actually reach.
+
+    "Actually reach" is the important part. Voices installed through Settings
+    or through Narrator's natural-voice list often register only under
+    Speech_OneCore, and System.Speech reads the older Speech key, so a voice
+    can be installed, work perfectly in Narrator, and be invisible here. If
+    something you have just installed is missing from this list, that is why;
+    see the note in the README.
+    """
+    sink = best_sink()
+    if sink is None:
+        print("no speech engine found")
+        return
+    print(f"engine: {sink.name}")
+    names = []
+    if hasattr(sink, "installed"):
+        names = sink.installed()
+    else:
+        try:
+            import pyttsx3
+            e = pyttsx3.init()
+            names = [f"{v.name}  ({v.id})" for v in e.getProperty("voices")]
+            e.stop()
+        except Exception as exc:
+            print(f"could not list voices: {exc}")
+    for n in names:
+        print(f"  {n}")
+    if not names:
+        print("  (none reported)")
+
+
 if __name__ == "__main__":
     # A quick listen, so the voice can be judged before it is wired in.
+    if "--list" in sys.argv:
+        list_voices()
+        raise SystemExit(0)
+    voice_name = None
+    if "--voice" in sys.argv:
+        i = sys.argv.index("--voice")
+        voice_name = sys.argv[i + 1]
+        del sys.argv[i:i + 2]
     lines = sys.argv[1:] or [
         "Scanning the room.",
         "A white ball by the couch, about thirty degrees to the right. "
         "Turning to face it.",
         "Close now. Stopping here.",
     ]
-    with Voice() as v:
+    with Voice(voice=voice_name) as v:
         print(v.describe)
         for line in lines:
             print(f"  {shorten(line)}")

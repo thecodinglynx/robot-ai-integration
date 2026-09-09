@@ -655,6 +655,10 @@ def main() -> int:
                          'to it"')
     ap.add_argument("--no-voice", action="store_true",
                     help="do not speak the narration aloud")
+    ap.add_argument("--voice-name", default=None,
+                    help="which installed voice to use, matched loosely, e.g. "
+                         "\"Zira\" or \"Hazel\". `python voice.py --list` "
+                         "shows what is available")
     ap.add_argument("--voice-rate", type=int, default=None,
                     help="speaking speed in words per minute, around 200 is "
                          "normal. Faster keeps the speech in step with a "
@@ -740,7 +744,8 @@ def main() -> int:
             print(f"camera: {args.framesize} ({size}), about {tokens} tokens "
                   f"a frame, keeping {args.keep_frames} in the conversation")
 
-            voice = Voice(enabled=not args.no_voice, rate=args.voice_rate)
+            voice = Voice(enabled=not args.no_voice, rate=args.voice_rate,
+                  voice=args.voice_name)
             print(voice.describe)
             voice.say(f"Starting. {args.task}.")
 

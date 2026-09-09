@@ -124,6 +124,45 @@ room the car was in.
 - `demo_look_around.py` — the robot looks around, drives a little, and
   retraces its way back. Exercises every subsystem in one run.
 
+## The robot's voice
+
+The agent speaks its narration aloud as it drives. That text already exists and
+is already written to be followed by a person, so it costs no extra tool call,
+no extra turn and no extra tokens.
+
+```bash
+python voice.py --list          # what your machine can actually speak with
+python voice.py                 # hear it say a few sample lines
+python voice.py --voice Hazel "Turning left to face the door."
+```
+
+In a run: `--voice-name Zira`, `--voice-rate 240`, `--no-voice`.
+
+**Adding better voices on Windows.** Two places, and they are not the same:
+
+- *Settings, Time & language, Speech, Manage voices* installs the classic
+  SAPI5 desktop voices that come with language packs.
+- *Settings, Accessibility, Narrator, Add natural voices* installs the modern
+  neural voices, which sound far better and still run offline.
+
+**The trap: a newly installed voice may not appear in `--list`.** Voices added
+through either of those often register only under
+`HKLM\SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens`, while `System.Speech`
+reads `HKLM\SOFTWARE\Microsoft\Speech\Voices\Tokens`. So a voice can be
+installed, work perfectly in Narrator, and be invisible here. Copying the token
+key from the OneCore branch to the other one makes it visible; export the key,
+edit the path in the `.reg` file, and import it.
+
+If the built-in voices are not good enough, the better answer is a cloud
+synthesiser rather than fighting the registry. It also fits the robot plan: the
+host renders audio either way, and a cloud engine hands you the bytes directly,
+which is exactly what gets POSTed to the ESP32.
+
+**It will sound the same through the robot.** Synthesis stays on the host in
+both phases; the speaker only reproduces what the host renders. What will
+change is the fidelity: a 30 mm driver with no enclosure has no bass, so a
+clear mid-forward voice survives it better than a warm one.
+
 ## What is not in this repository
 
 - **Elegoo's official download bundle**, 262 MB, their copyright, and a free
