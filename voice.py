@@ -47,12 +47,47 @@ import threading
 from typing import Optional
 
 __all__ = ["Voice", "Sink", "Pyttsx3Sink", "PowerShellSink", "RobotSink",
-           "best_sink"]
+           "best_sink", "shorten", "speakable"]
 
 # Two sentences, or about this many characters, whichever comes first. The
 # model's narration can run long, and a turn takes a couple of seconds: speech
 # that outlasts the action it describes falls behind and stays behind.
 MAX_SPOKEN_CHARS = 180
+
+
+# Symbols the model writes and a synthesiser cannot say. Two problems at once:
+# a voice reads "14 deg left" better than "14° left" and says nothing at all
+# for "≈", and on Windows the default cp1252 pipe encoding cannot carry them,
+# which crashed a run mid-drive.
+SPOKEN_SUBSTITUTIONS = {
+    "°": " degrees",      # °
+    "≈": " about ",       # ≈
+    "±": " plus or minus ",
+    "×": " by ",
+    "→": " to ",          # →
+    "–": ", ",            # en dash
+    "—": ", ",            # em dash
+    "…": "...",
+    "‘": "'", "’": "'",
+    "“": '"', "”": '"',
+}
+
+
+def speakable(text: str) -> str:
+    """Text a synthesiser can pronounce and a pipe can carry.
+
+    Both halves matter. The model narrates in symbols, "14° left ≈ 80 ms",
+    which reads well on screen and badly aloud. And on Windows the pipe to the
+    speech engine is cp1252 by default, so a single "≈" raised a
+    UnicodeEncodeError on a thread inside `subprocess` that this module cannot
+    catch, printing a traceback in the middle of a run.
+
+    Substitute what has a spoken form, drop what does not.
+    """
+    for symbol, spoken in SPOKEN_SUBSTITUTIONS.items():
+        text = text.replace(symbol, spoken)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    return " ".join(text.split())
 
 
 def shorten(text: str, limit: int = MAX_SPOKEN_CHARS) -> str:
@@ -61,7 +96,7 @@ def shorten(text: str, limit: int = MAX_SPOKEN_CHARS) -> str:
     Sentence boundaries where possible, because a clause cut mid-phrase sounds
     like a fault rather than a summary.
     """
-    text = " ".join(text.split())
+    text = speakable(text)
     if len(text) <= limit:
         return text
     sentences = re.split(r"(?<=[.!?])\s+", text)
@@ -140,6 +175,7 @@ class PowerShellSink(Sink):
     name = "powershell"
 
     SCRIPT = (
+        "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new(); "
         "Add-Type -AssemblyName System.Speech; "
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
         "$s.Rate = $env:VOICE_RATE; "
@@ -156,9 +192,15 @@ class PowerShellSink(Sink):
     def speak(self, text: str) -> None:
         import os
         env = dict(os.environ, VOICE_RATE=str(self.rate))
+        # utf-8 with errors="replace" rather than the console default, which
+        # is cp1252 on Windows and cannot carry a degree sign. `shorten` has
+        # already stripped anything unpronounceable; this is the second line
+        # of defence, because the failure happens on a thread inside
+        # subprocess where it cannot be caught.
         subprocess.run([self.exe, "-NoProfile", "-NonInteractive",
                         "-Command", self.SCRIPT],
                        input=text, text=True, env=env,
+                       encoding="utf-8", errors="replace",
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=60)
 
