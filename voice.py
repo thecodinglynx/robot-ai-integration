@@ -49,10 +49,16 @@ from typing import Optional
 __all__ = ["Voice", "Sink", "Pyttsx3Sink", "PowerShellSink", "RobotSink",
            "best_sink", "shorten", "speakable"]
 
-# Two sentences, or about this many characters, whichever comes first. The
-# model's narration can run long, and a turn takes a couple of seconds: speech
-# that outlasts the action it describes falls behind and stays behind.
-MAX_SPOKEN_CHARS = 180
+# One sentence, or about this many characters, whichever comes first. Was 180,
+# which still ran on past the action it described: an utterance has to finish
+# inside the couple of seconds a turn takes, or the robot is somewhere else by
+# the time the sentence ends and the commentary is worse than useless.
+MAX_SPOKEN_CHARS = 110
+
+# Words per minute. Deliberately above the ~200 that both engines default to.
+# The robot moves while it talks, so the words have to keep up; this is about
+# a newsreader's clip, still clear but not leisurely. --voice-rate overrides.
+DEFAULT_RATE_WPM = 275
 
 
 # Symbols the model writes and a synthesiser cannot say. Two problems at once:
@@ -100,16 +106,29 @@ def shorten(text: str, limit: int = MAX_SPOKEN_CHARS) -> str:
     if len(text) <= limit:
         return text
     sentences = re.split(r"(?<=[.!?])\s+", text)
+
+    # Keep as much as fits from the front, which is usually what was seen.
     out = ""
     for sentence in sentences:
         if out and len(out) + len(sentence) + 1 > limit:
             break
         out = f"{out} {sentence}".strip()
-    # A single sentence longer than the limit falls straight through the loop
-    # above, so the length has to be checked again rather than assumed. Cut on
-    # a word boundary in that case: a word chopped in half sounds like a fault.
+
+    # But if that dropped the ending, prefer the ending. Narration is almost
+    # always "what I can see, then what I am about to do", and the second half
+    # is the half worth hearing: whoever is listening can see the room for
+    # themselves, and cannot see what the robot has decided. The first version
+    # kept the front and cut the intent, so a long line was spoken as "I can
+    # see a person lying on the floor" with the "turning to face them" lost.
+    if out and len(out) <= limit and out.strip() != text.strip():
+        tail = sentences[-1].strip()
+        if tail and tail not in out and len(tail) <= limit:
+            return tail
+
     if out and len(out) <= limit:
         return out
+    # A single sentence longer than the limit falls through everything above,
+    # so cut it on a word boundary: a word chopped in half sounds like a fault.
     return text[:limit].rsplit(" ", 1)[0] + "..."
 
 
@@ -285,6 +304,7 @@ class Voice:
     def __init__(self, sink: Optional[Sink] = None, enabled: bool = True,
                  rate: Optional[int] = None, voice: Optional[str] = None,
                  depth: int = 2, on_note=print):
+        rate = DEFAULT_RATE_WPM if rate is None else rate
         self.enabled = enabled
         self.sink = sink if sink is not None else (
             best_sink(rate=rate, voice=voice) if enabled else None)

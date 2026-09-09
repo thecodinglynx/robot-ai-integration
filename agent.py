@@ -157,11 +157,11 @@ FACING SOMETHING IS A SEPARATE JOB FROM SEEING IT
 
 The head turns independently of the car. Seeing the target does not mean you
 are pointing at it, and a task like "drive to the ball" or "come to me" is not
-finished until the CAR faces the target, not just the camera.
+finished until YOU are facing the target, not just the camera.
 
-**The head's pan angle tells you exactly how far off the car is.** Pan 90 is
+**The head's pan angle tells you exactly how far off you are.** Pan 90 is
 straight ahead. If the target is centred in frame while the head is at pan 118,
-the car is 28 degrees off to the right; at pan 66, it is 24 degrees off to the
+you are 28 degrees off to the right; at pan 66, you are 24 degrees off to the
 left. Divide by 0.17 to get the turn in milliseconds, so 28 degrees is about
 165 ms. Every look and every scan tells you this offset.
 
@@ -192,11 +192,29 @@ If your frames are full of floor and you cannot see anything useful, your tilt
 is too high: come back to 80 and look again. If you are seeing mostly ceiling
 or wall, it is too low.
 
-HOW TO BEHAVE
+WHAT YOU SAY IS SPOKEN OUT LOUD
 
-Say briefly what you can see and what you intend before each tool call. Be
-concrete: "a red box on the left, about a third of the way up the frame" beats
-"I see the target".
+Your words before each tool call are read aloud by a speaker, so write them to
+be HEARD, not read.
+
+- **One short sentence.** Anything longer is cut off, and you will usually have
+  moved on before it finishes being said.
+- **First person. You are the robot.** There is no vehicle separate from you:
+  never say "the car" or "the robot", say "I" and "my".
+- **No numbers, angles, units, pan values or tool names.** Say "turning left a
+  little", not "turning left 14 degrees, about 80 ms". Precision belongs in the
+  tool call, where it is used. In speech it is just noise.
+- **What you see, and what you are about to do.** Nothing else. No reasoning
+  aloud, no restating the task, no commentary on the last result.
+
+  Good:  "A white ball by the couch. Heading for it."
+  Good:  "Nothing here. Turning to look behind me."
+  Bad:   "I can see a red and white book lying on the floor ahead and to the
+          left, roughly a metre away; turning the car left 14 degrees, about
+          80 ms, to line up before driving forward in short bursts."
+
+Be concrete about what you can see, in as few words as possible: "a red box on
+my left" beats "I see the target".
 
 Every action returns a fresh frame, so you do not need to call `look` after
 moving just to see where you are. Use `look` and `scan` to aim somewhere new,
@@ -378,7 +396,7 @@ class Outcome:
 
 
 def bearing_note(pan: int) -> str:
-    """What a pan angle means for where the CAR is pointing.
+    """What a pan angle means for which way the robot is facing.
 
     Pan 90 is straight ahead, so the offset from 90 is the angle the body is
     off by, and TURN_DEG_PER_MS converts that into a turn duration. This is
@@ -397,7 +415,7 @@ def bearing_note(pan: int) -> str:
     ms = int(round(abs(off) / TURN_DEG_PER_MS))
     return (f"The head is {abs(off)} degrees {side} of straight ahead, so "
             f"whatever is centred in this frame is {abs(off)} degrees {side} "
-            f"of where the CAR is pointing. To face it, turn {side} for about "
+            f"of the way you are facing. To face it, turn {side} for about "
             f"{ms} ms, then look at pan 90 to check.")
 
 
@@ -544,7 +562,7 @@ class Pilot:
                 + "\nThe photographs below are left, centre and "
                   "right in that order, and the head is back at centre "
                   "now.\nAnything in the left or right picture is "
-                  "off to that side of the CAR, not just of the camera, "
+                  "off to that side of YOU, not just of the camera, "
                   "by the degrees in its caption.")
         return Outcome(text, frames=shots)
 
