@@ -47,13 +47,14 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from elegoo import (Car, CarConfig, CarError, Direction,
                     TILT_MIN, TILT_MAX, TILT_SCAN, TILT_DRIVING,
                     DRIVE_SPEED, TURN_SPEED, DRIVE_SPEED_MAX,
                     TURN_DEG_PER_MS, DRIVE_MM_PER_MS)
 from safety import SafetyLoop, SafetyConfig
+from voice import Voice
 
 try:
     import anthropic
@@ -368,6 +369,12 @@ class Outcome:
     text: str
     frame: Optional[bytes] = None
     is_error: bool = False
+    # Several labelled photographs, for `scan`. A scan that returns only the
+    # view straight ahead is nearly useless for finding things: on 2026-09-08
+    # the head was pointed directly at the person the model was hunting for,
+    # the model was handed a distance instead of a picture, concluded the room
+    # was empty and turned away from it.
+    frames: Optional[List[Tuple[str, bytes]]] = None
 
 
 def bearing_note(pan: int) -> str:
@@ -496,30 +503,50 @@ class Pilot:
                        frame=self.frame())
 
     def _do_scan(self, args) -> Outcome:
+        """Sweep the head and bring back what it saw, in pictures.
+
+        The first version returned distances at five head positions and one
+        photograph, straight ahead. That is a range finder sweep, not a look
+        around, and it cost a run: the head was pointed at the target, the
+        model got a number rather than an image, and it turned away.
+
+        Three photographs rather than five to keep the cost down. The
+        in-between positions still report their distance, and the frames are
+        pruned out of the conversation a few turns later like any other.
+        """
         lines = []
-        centre_frame = None
+        shots: List[Tuple[str, bytes]] = []
         # Survey at the survey tilt, whatever the last look left the head at.
         # A scan taken while the head is still aimed at the floor from an
         # approach is a scan of the floor.
         self.car.tilt(self.survey_tilt)
+        photograph_at = (PAN_MIN, PAN_CENTRE, PAN_MAX)
         for pan in (PAN_MIN, 76, PAN_CENTRE, 104, PAN_MAX):
             self.car.pan(pan)
             time.sleep(0.45)
             r = self.guard.reading
+            off = pan - PAN_CENTRE
+            where = ("straight ahead" if off == 0
+                     else f"{abs(off)} deg {'right' if off > 0 else 'left'}")
             if r is None:
-                lines.append(f"  pan {pan}: no reading")
-                continue
-            d = "far" if r.at_ceiling else f"{r.distance_cm:.0f} cm"
-            side = ("left" if pan < PAN_CENTRE else
-                    "right" if pan > PAN_CENTRE else "ahead")
-            lines.append(f"  pan {pan} ({side}): {d}")
-            if pan == PAN_CENTRE:
-                centre_frame = self.frame()
+                lines.append(f"  pan {pan} ({where}): no reading")
+            else:
+                d = "far" if r.at_ceiling else f"{r.distance_cm:.0f} cm"
+                lines.append(f"  pan {pan} ({where}): {d}")
+            if pan in photograph_at:
+                jpeg = self.frame()
+                if jpeg:
+                    shots.append((f"pan {pan}, looking {where}", jpeg))
         self.car.pan(PAN_CENTRE)
         time.sleep(0.3)
-        return Outcome("Swept the head across its range:\n" + "\n".join(lines)
-                       + "\nThe photograph is the view straight ahead.",
-                       frame=centre_frame or self.frame())
+        text = ("Swept the head across its range:\n"
+                + "\n".join(lines)
+                + "\nThe photographs below are left, centre and "
+                  "right in that order, and the head is back at centre "
+                  "now.\nAnything in the left or right picture is "
+                  "off to that side of the CAR, not just of the camera, "
+                  "by the degrees in its caption.")
+        return Outcome(text, frames=shots)
 
     def _do_stop(self, args) -> Outcome:
         self.car.stop()
@@ -588,6 +615,32 @@ def prune_images(messages: List[Dict[str, Any]], keep: int) -> int:
     return dropped
 
 
+def tool_result_content(outcome, sensors_text, log, turn):
+    """Assemble what goes back to the model after one action.
+
+    Pulled out of the loop so it can be tested. It was inline, and a change
+    that taught it about multi-frame outcomes went in while the matching field
+    on `Outcome` did not: every unit test passed, because they all call the
+    tool handlers directly and none of them exercised the message assembly.
+    The run died on the first `scan`.
+
+    Returns (content blocks, a name for the log).
+    """
+    content = [{"type": "text",
+                "text": f"{outcome.text}\n\n{sensors_text}"}]
+    if getattr(outcome, "frames", None):
+        names = []
+        for i, (label, jpeg) in enumerate(outcome.frames):
+            names.append(log.frame(turn, jpeg, f"scan{i}"))
+            content.append({"type": "text", "text": f"[{label}]"})
+            content.append(image_block(jpeg))
+        return content, ", ".join(names)
+    if outcome.frame:
+        content.append(image_block(outcome.frame))
+        return content, log.frame(turn, outcome.frame)
+    return content, None
+
+
 def image_block(jpeg: bytes) -> Dict[str, Any]:
     return {"type": "image",
             "source": {"type": "base64", "media_type": "image/jpeg",
@@ -600,6 +653,12 @@ def main() -> int:
     ap.add_argument("--task", required=True,
                     help='what to attempt, e.g. "find the red box and drive '
                          'to it"')
+    ap.add_argument("--no-voice", action="store_true",
+                    help="do not speak the narration aloud")
+    ap.add_argument("--voice-rate", type=int, default=None,
+                    help="speaking speed in words per minute, around 200 is "
+                         "normal. Faster keeps the speech in step with a "
+                         "robot that is still moving")
     ap.add_argument("--keep-frames", type=int, default=3,
                     help="how many recent photographs stay in the "
                          "conversation, default %(default)s. Every frame is "
@@ -681,6 +740,10 @@ def main() -> int:
             print(f"camera: {args.framesize} ({size}), about {tokens} tokens "
                   f"a frame, keeping {args.keep_frames} in the conversation")
 
+            voice = Voice(enabled=not args.no_voice, rate=args.voice_rate)
+            print(voice.describe)
+            voice.say(f"Starting. {args.task}.")
+
             print(f"task: {args.task}")
             print(f"model: {args.model}, effort {args.effort}")
             print(f"{guard.describe()}\n")
@@ -723,6 +786,11 @@ def main() -> int:
                                 if b.type == "text").strip()
                 if said:
                     print(f"[{turn}] {said}")
+                    # The narration is already written for a person to follow,
+                    # which is exactly what makes it worth saying out loud.
+                    # Fire and forget: `say` returns at once and drops anything
+                    # the robot has already moved past.
+                    voice.say(said)
 
                 calls = [b for b in response.content if b.type == "tool_use"]
                 if not calls:
@@ -742,22 +810,8 @@ def main() -> int:
                     outcome = pilot.execute(call.name, call.input)
                     print(f"         {outcome.text.splitlines()[0]}")
 
-                    content: List[Dict[str, Any]] = []
-                    frame_name = None
-                    body = f"{outcome.text}\n\n{pilot.sensors()}"
-                    content.append({"type": "text", "text": body})
-                    if outcome.frames:
-                        # scan brings back several labelled views
-                        names = []
-                        for i, (label, jpeg) in enumerate(outcome.frames):
-                            names.append(log.frame(turn, jpeg, f"scan{i}"))
-                            content.append({"type": "text",
-                                            "text": f"[{label}]"})
-                            content.append(image_block(jpeg))
-                        frame_name = ", ".join(names)
-                    elif outcome.frame:
-                        frame_name = log.frame(turn, outcome.frame)
-                        content.append(image_block(outcome.frame))
+                    content, frame_name = tool_result_content(
+                        outcome, pilot.sensors(), log, turn)
 
                     results.append({"type": "tool_result",
                                     "tool_use_id": call.id,
@@ -790,6 +844,10 @@ def main() -> int:
                 if spare > 0:
                     time.sleep(spare)
 
+            if pilot.finished:
+                voice.say(pilot.finished.get("summary") or "Finished.")
+            voice.close(wait=6.0)
+
             print()
             if totals["input"]:
                 print(f"tokens: {totals['input']:,} in "
@@ -821,6 +879,10 @@ def main() -> int:
     except (OSError, CarError) as exc:
         print(f"\nfailed: {type(exc).__name__}: {exc}")
         return 2
+    finally:
+        # Let a finished sentence finish, but never leave a voice talking
+        # about a robot that has stopped.
+        voice.close(wait=6.0 if voice.spoken else 0.5)
 
 
 if __name__ == "__main__":
