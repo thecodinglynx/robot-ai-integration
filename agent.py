@@ -231,6 +231,34 @@ When you have achieved the task, or concluded you cannot, call report and stop.
 Do not keep going indefinitely."""
 
 
+# Every tool carries this, and it is required. Narration used to be free text
+# alongside the tool call, and that failed: the API does not oblige a model to
+# emit a text block with a tool call, and at low effort Sonnet frequently
+# emitted none at all. Half the turns of a run were silent, and the persona had
+# nothing to act on, which looked exactly like the persona being ignored.
+#
+# As a required parameter it cannot be skipped, and the description sits at the
+# point of use rather than in a section of a long system prompt.
+SAY_PARAMETER = {
+    "type": "string",
+    "maxLength": 110,
+    "description": (
+        "What you SAY OUT LOUD as you do this. Required, never empty. "
+        "One short sentence, in the voice described under HOW YOU TALK, "
+        "and stay in that voice on every single call. First person, no "
+        "numbers, no angles, no units, no tool names: it is spoken by a "
+        "speaker on the robot, not read. Say what you can see and what you "
+        "are about to do, in character."),
+}
+
+
+def with_say(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Add the spoken line to a tool's schema, as a required field."""
+    schema["properties"] = {"say": SAY_PARAMETER, **schema["properties"]}
+    schema["required"] = ["say"] + list(schema.get("required", []))
+    return schema
+
+
 def tool_definitions() -> List[Dict[str, Any]]:
     """The whole vocabulary. Deliberately small.
 
@@ -238,7 +266,7 @@ def tool_definitions() -> List[Dict[str, Any]]:
     actually accepts. Presenting a `distance_cm` parameter would be a fiction:
     nothing here can measure distance travelled.
     """
-    return [
+    tools = [
         {
             "name": "drive",
             "description": (
@@ -343,6 +371,9 @@ def tool_definitions() -> List[Dict[str, Any]]:
             },
         },
     ]
+    for tool in tools:
+        with_say(tool["input_schema"])
+    return tools
 
 
 class RunLog:
@@ -785,7 +816,9 @@ def main() -> int:
                   f"a frame, keeping {args.keep_frames} in the conversation")
 
             print(voice.describe)
-            voice.say(f"Starting. {args.task}.")
+            # No spoken opening line. It used to say "Starting" plus the task,
+            # in a flat voice, immediately before the first tool call spoke in
+            # character, which undercut the persona in the first two seconds.
 
             print(f"task: {args.task}")
             print(f"model: {args.model}, effort {args.effort}")
@@ -829,12 +862,7 @@ def main() -> int:
                 said = " ".join(b.text.strip() for b in response.content
                                 if b.type == "text").strip()
                 if said:
-                    print(f"[{turn}] {said}")
-                    # The narration is already written for a person to follow,
-                    # which is exactly what makes it worth saying out loud.
-                    # Fire and forget: `say` returns at once and drops anything
-                    # the robot has already moved past.
-                    voice.say(said)
+                    print(f"[{turn}] (thinking) {said}")
 
                 calls = [b for b in response.content if b.type == "tool_use"]
                 if not calls:
@@ -850,6 +878,13 @@ def main() -> int:
 
                 results = []
                 for call in calls:
+                    # The spoken line is a required parameter now, so there is
+                    # always one, and it is the robot's voice rather than the
+                    # model's aside to us.
+                    spoken = (call.input or {}).get("say") or ""
+                    if spoken:
+                        print(f"[{turn}] {spoken}")
+                        voice.say(spoken)
                     print(f"      -> {call.name}({json.dumps(call.input)})")
                     outcome = pilot.execute(call.name, call.input)
                     print(f"         {outcome.text.splitlines()[0]}")
@@ -866,6 +901,7 @@ def main() -> int:
                     log.turn({
                         "turn": turn, "said": said,
                         "tool": call.name, "input": call.input,
+                        "spoken": spoken,
                         "result": outcome.text, "frame": frame_name,
                         "is_error": outcome.is_error,
                         "sensors": pilot.sensors(),
@@ -888,8 +924,7 @@ def main() -> int:
                 if spare > 0:
                     time.sleep(spare)
 
-            if pilot.finished:
-                voice.say(pilot.finished.get("summary") or "Finished.")
+            # The closing line was already said as the report's own `say`.
             voice.close(wait=6.0)
 
             print()

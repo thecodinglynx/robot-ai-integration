@@ -28,13 +28,24 @@ indistinguishable from each other.
 
 WHAT ACTUALLY STEERS A MODEL HERE
 
-**Examples, and there must be only one set of them.** The first attempt at this
-failed completely, with every persona sounding identical. The cause was not the
-personas: the base prompt carried its own examples of good narration, in plain
-style, labelled "Good", and the persona was appended after them. Concrete
-labelled examples beat a later description of tone every time. The persona is
-now substituted INTO the prompt at that point, so exactly one place says how to
-talk.
+**The line has to be compulsory before its style can matter.** The first two
+attempts failed with every persona sounding identical, for two different
+reasons.
+
+The first was competing examples: the base prompt carried its own examples of
+good narration, in plain style, labelled "Good", and the persona was appended
+after them. Concrete labelled examples beat a later description of tone every
+time. The persona is now substituted INTO the prompt at that point, so exactly
+one place says how to talk.
+
+The second was that there was often nothing to style at all. Narration was free
+text alongside the tool call, and the API does not oblige a model to emit a text
+block with one: at `--effort low`, Sonnet produced none on more than half the
+turns of a run. Silence reads exactly like an ignored persona. The spoken line
+is now a **required parameter on every tool**, capped at 110 characters, with
+its description pointing back at the persona section. It cannot be skipped, and
+the instruction sits at the point of use rather than in one section of a long
+system prompt.
 
 Adjectives alone do very little. "Be funny" produces a model straining for
 jokes; four sample lines produce the register wanted. So each persona is mostly
