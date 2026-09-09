@@ -1018,7 +1018,7 @@ truncated action makes its own dead reckoning wrong without it ever knowing.
         of 900 and 1017 over an edge, which is generous. A dark rug will read
         higher. Check any new surface before driving on it.
 - [x] **05** Model loop. **Ran against the car 2026-09-07 and works.** Claude
-      Opus 5, adaptive thinking, effort low by default. Manual loop rather than
+      Sonnet 5, adaptive thinking, effort low by default. Manual loop rather than
       the SDK's tool runner, for pacing, a turn budget, a host owned stop, and
       the per-turn logging. Vocabulary: drive, turn, look, scan, stop, report,
       in durations rather than distances, because that is what the robot
@@ -1058,10 +1058,12 @@ Phases 00 to 06 are done. What is left, roughly in order of value:
   turn run by about 93%. `--keep-frames` and `--framesize` tune it. Every run
   prints its token total, so further work here can be measured rather than
   guessed at.
-- **08 Model comparison.** The reason for starting on Opus was that a weaker
-  model failing is hard to tell apart from a bad prompt. The prompt is now
-  known to work, so `--model claude-sonnet-5` and compare turns to completion
-  using the run logs. `run.json` records the model, so it is traceable.
+- [x] **08 Model comparison. Done 2026-09-08: Sonnet 5 at low effort is the
+  default.** It scans first, computes its turns from the head's pan offset,
+  corrects an overshoot and knows when it has arrived, at about a third of the
+  cost of Opus. Opus remains a `--model` away for anything needing finer
+  judgement. `run.json` records the model and the exact prompt, so a comparison
+  is traceable rather than an impression.
 - **09 Dark floors.** The last untested part of phase 04. Channel 2 reads 170
   on hardwood against a threshold of 900 and 1017 over an edge, which is
   generous, but a dark rug reads higher. Check every surface the car will meet
@@ -1094,12 +1096,18 @@ objects in frame, a target that disappears behind furniture, noticing after
 four turns that the strategy is not working, and not looping between turn left
 and turn right.
 
-**So: first runs on Opus 5, then step down and compare.** Not because the task
-demands Opus, but because a weaker model failing is hard to tell apart from a
-bad prompt, and the first job is establishing that the loop works at all. Once
-there is a baseline, `--model claude-sonnet-5` and compare turns to completion
-using the run logs. `agent.py` records the model in `run.json`, so the
-comparison is traceable.
+**Settled 2026-09-08: Sonnet 5 at low effort, and it is the default.** The
+plan was to start on Opus and step down, because a weaker model failing is hard
+to tell apart from a bad prompt. That was the right order, and the step down
+went through cleanly: Sonnet drives this robot well, at about a third of the
+cost.
+
+**Worth recording, because it kept being the answer.** Every failure blamed on
+the model turned out to be the harness: camera frames that were a move out of
+date, a scan that returned no photographs of the sides, a turn direction
+mirrored by crossed parameter names in Elegoo's firmware, and narration the API
+was never obliged to produce. Four rounds of "the model is being stupid" were
+four harness bugs. Be slow to conclude the model is the weak part.
 
 ## Conventions
 
@@ -1315,7 +1323,7 @@ The findings from all of them are in this file, which is the point.
   `02 .../04 Code of Carmer (ESP32)/`, and `camera_pins.h` there is the ground
   truth that a day of guessing failed to reach.
 - `agent.py` - the phase 05 model loop, with phase 06 logging built in.
-  Claude Opus 5 gets a frame, the sensors and the last outcome; replies with
+  The model gets a frame, the sensors and the last outcome; replies with
   one tool call; the host executes it through the safety layer and hands back
   what happened plus a fresh frame.
 - `demo_look_around.py` - the robot looks around, drives a little and retraces

@@ -62,12 +62,22 @@ try:
 except ImportError:          # importable without the SDK, so the robot side
     anthropic = None         # can be tested without credentials
 
-# Opus 5 by default. Not because the task demands it, but because a weaker
-# model failing is hard to tell apart from a bad prompt, and the first job is
-# to establish that the loop works at all. Cost is not the deciding factor at
-# this scale: a twenty turn run is under a dollar on Opus and about a third of
-# that on Sonnet. Step down once there is a baseline to compare against.
-DEFAULT_MODEL = "claude-opus-5"
+# Sonnet 5, on the evidence of runs rather than on principle.
+#
+# The plan called for starting on Opus, because a weaker model failing is hard
+# to tell apart from a bad prompt and the first job was establishing that the
+# loop worked at all. That baseline exists now, and Sonnet 5 at low effort
+# drives this robot well: it scans first, computes its turns from the head's
+# pan offset, corrects when it overshoots, and knows when it has arrived.
+#
+# It is also about a third of the cost, which matters more now that runs are
+# routine rather than experimental.
+#
+# Every failure blamed on the model so far has turned out to be the harness:
+# stale camera frames, a scan that returned no side photographs, a mirrored
+# turn direction, and narration that was never required in the first place. Be
+# slow to conclude the model is the weak part.
+DEFAULT_MODEL = "claude-sonnet-5"
 
 PAN_MIN, PAN_MAX, PAN_CENTRE = 62, 118, 90
 
@@ -744,11 +754,12 @@ def main() -> int:
     ap.add_argument("--turns", type=int, default=20,
                     help="hard cap on model turns, default 20")
     ap.add_argument("--model", default=DEFAULT_MODEL,
-                    help=f"which model drives. Default {DEFAULT_MODEL}. "
-                         f"claude-sonnet-5 is cheaper and quicker and is "
-                         f"probably enough for a brightly coloured target; "
-                         f"compare turns-to-completion against a logged Opus "
-                         f"run before trusting it")
+                    help=f"which model drives. Default {DEFAULT_MODEL}, which "
+                         f"handles this task well at low effort and costs "
+                         f"about a third of Opus. Try claude-opus-5 if a task "
+                         f"needs finer judgement, and compare "
+                         f"turns-to-completion using the run logs rather than "
+                         f"by impression")
     ap.add_argument("--effort", default="low",
                     choices=["low", "medium", "high", "xhigh", "max"],
                     help="how hard the model thinks per turn. Low keeps the "
