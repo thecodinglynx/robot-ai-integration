@@ -138,6 +138,25 @@ python voice.py --voice Hazel "Turning left to face the door."
 
 In a run: `--voice-name Zira`, `--voice-rate 240`, `--no-voice`.
 
+**Personalities.** `--persona` changes how it talks and nothing else:
+
+```bash
+python agent.py --host 192.168.1.211 --persona sarcastic --task "find the ball"
+```
+
+`plain` (default), `funny`, `serious`, `annoyed`, `sarcastic`. Each picks a
+speaking rate that suits it; `--voice-rate` still overrides. `python
+personas.py` prints them all with examples.
+
+The separation is deliberate and enforced in the prompt. A persona is a
+speaking style, never a driving style: every one of them carries the same
+prohibitions on inventing an observation to suit a line, on changing which tool
+it calls or how long it keeps trying, and on arguing with the safety layer. A
+sarcastic robot that stretches what it sees would be a worse robot, and that
+failure would not announce itself, because the narration would still sound
+fine. Each run's `run.json` records the persona and the exact prompt used, so
+two runs can be compared.
+
 **Adding better voices on Windows.** Two places, and they are not the same:
 
 - *Settings, Time & language, Speech, Manage voices* installs the classic

@@ -55,6 +55,7 @@ from elegoo import (Car, CarConfig, CarError, Direction,
                     TURN_DEG_PER_MS, DRIVE_MM_PER_MS)
 from safety import SafetyLoop, SafetyConfig
 from voice import Voice
+import personas
 
 try:
     import anthropic
@@ -355,7 +356,8 @@ class RunLog:
     room, a different battery, or a different starting angle.
     """
 
-    def __init__(self, root: str, task: str, model: str):
+    def __init__(self, root: str, task: str, model: str,
+                 system: str = SYSTEM, persona: str = "plain"):
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self.dir = os.path.join(root, stamp)
         os.makedirs(os.path.join(self.dir, "frames"), exist_ok=True)
@@ -363,8 +365,10 @@ class RunLog:
         self.started = time.time()
         with open(os.path.join(self.dir, "run.json"), "w",
                   encoding="utf-8") as f:
-            json.dump({"task": task, "model": model, "system": SYSTEM,
-                       "tools": tool_definitions(),
+            # The exact system prompt, persona included, because one run is
+            # only comparable with another if you can see what each was told.
+            json.dump({"task": task, "model": model, "persona": persona,
+                       "system": system, "tools": tool_definitions(),
                        "started": stamp}, f, indent=2)
         print(f"logging to {self.dir}")
 
@@ -673,6 +677,11 @@ def main() -> int:
                          'to it"')
     ap.add_argument("--no-voice", action="store_true",
                     help="do not speak the narration aloud")
+    ap.add_argument("--persona", default=personas.DEFAULT_PERSONA,
+                    choices=sorted(personas.PERSONAS),
+                    help="how the robot talks: " + personas.names()
+                         + ". Style only; it never changes what the robot "
+                           "does or how carefully it does it")
     ap.add_argument("--voice-name", default=None,
                     help="which installed voice to use, matched loosely, e.g. "
                          "\"Zira\" or \"Hazel\". `python voice.py --list` "
@@ -730,7 +739,17 @@ def main() -> int:
 
     client = anthropic.Anthropic()
     tools = tool_definitions()
-    log = RunLog(args.logs, args.task, args.model)
+    persona = personas.get(args.persona)
+    system_prompt = SYSTEM + "\n\n" + persona.prompt
+    log = RunLog(args.logs, args.task, args.model,
+                 system=system_prompt, persona=persona.name)
+    # Built before the try so the finally below can always shut it up, and
+    # after the persona because the persona chooses a speaking rate that suits
+    # it. An explicit --voice-rate still wins.
+    voice = Voice(enabled=not args.no_voice,
+                  rate=(args.voice_rate if args.voice_rate is not None
+                        else persona.rate),
+                  voice=args.voice_name)
 
     cfg = CarConfig.from_env(**({"host": args.host} if args.host else {}))
     # Where the head sits at the start of the run, and what `scan` surveys
@@ -762,13 +781,12 @@ def main() -> int:
             print(f"camera: {args.framesize} ({size}), about {tokens} tokens "
                   f"a frame, keeping {args.keep_frames} in the conversation")
 
-            voice = Voice(enabled=not args.no_voice, rate=args.voice_rate,
-                  voice=args.voice_name)
             print(voice.describe)
             voice.say(f"Starting. {args.task}.")
 
             print(f"task: {args.task}")
             print(f"model: {args.model}, effort {args.effort}")
+            print(f"persona: {persona.name}, {persona.summary}")
             print(f"{guard.describe()}\n")
 
             first_frame = pilot.frame()
@@ -789,7 +807,7 @@ def main() -> int:
                 response = client.messages.create(
                     model=args.model,
                     max_tokens=8000,
-                    system=SYSTEM,
+                    system=system_prompt,
                     tools=tools,
                     # Auto caching: the system prompt and tool list never
                     # change, and the history only grows at the end, so the
