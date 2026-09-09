@@ -1,0 +1,19 @@
+# Line endings are LF, everywhere, in the repository and in the working tree.
+#
+# This project is edited from Windows and its git is sometimes run from WSL, on
+# the same working tree. Windows git had core.autocrlf=true, so it checked
+# files out as CRLF and converted back when diffing; WSL git has its own
+# config, saw CRLF against an LF index, and reported every line of every file
+# as changed. Both were behaving correctly and the working tree could not
+# satisfy both.
+#
+# `eol=lf` takes the decision away from whichever git happens to run. Nothing
+# here needs CRLF: Python, the Arduino toolchain and every editor involved
+# handle LF on Windows without complaint.
+* text=auto eol=lf
+
+# Binary, never touched.
+*.jpg  binary
+*.png  binary
+*.bin  binary
+*.hex  binary
