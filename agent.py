@@ -208,14 +208,11 @@ be HEARD, not read.
 - **What you see, and what you are about to do.** Nothing else. No reasoning
   aloud, no restating the task, no commentary on the last result.
 
-  Good:  "A white ball by the couch. Heading for it."
-  Good:  "Nothing here. Turning to look behind me."
-  Bad:   "I can see a red and white book lying on the floor ahead and to the
-          left, roughly a metre away; turning the car left 14 degrees, about
-          80 ms, to line up before driving forward in short bursts."
+  Bad, for all of those reasons: "I can see a red and white book lying on the
+  floor ahead and to the left, roughly a metre away; turning the car left 14
+  degrees, about 80 ms, to line up before driving forward in short bursts."
 
-Be concrete about what you can see, in as few words as possible: "a red box on
-my left" beats "I see the target".
+{PERSONA}
 
 Every action returns a fresh frame, so you do not need to call `look` after
 moving just to see where you are. Use `look` and `scan` to aim somewhere new,
@@ -740,7 +737,13 @@ def main() -> int:
     client = anthropic.Anthropic()
     tools = tool_definitions()
     persona = personas.get(args.persona)
-    system_prompt = SYSTEM + "\n\n" + persona.prompt
+    # The persona is substituted INTO the prompt, where the narration rules
+    # are, rather than appended to the end of it. It used to be appended and
+    # every persona came out sounding the same: the base prompt carried its
+    # own examples of good narration, in plain style and labelled "Good",
+    # and concrete labelled examples beat a later description of tone every
+    # time. There is now exactly one place that says how to talk.
+    system_prompt = SYSTEM.replace("{PERSONA}", persona.prompt)
     log = RunLog(args.logs, args.task, args.model,
                  system=system_prompt, persona=persona.name)
     # Built before the try so the finally below can always shut it up, and
