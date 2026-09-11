@@ -722,12 +722,19 @@ go by the printed labels, not by which side a pad seems to be on.
 | --- | --- | --- |
 | VIN | **VCC** | the car's 5 V |
 | GND | **GND** | |
-| BCLK | **Link** | GPIO13, the front LED Elegoo's sketch drives |
+| BCLK | **Link** | GPIO13, front LED D2, confirmed 2026-09-10 |
 | LRC | **IO0** | GPIO0; the amp cannot pull the strap pin low at reset |
 | DIN | **TXD0** | GPIO1; see the trade below |
 | GAIN | 100 kOhm to VIN | 3 dB, for a small driver |
 
 **Never touch TXD1 or RXD1.** They are the serial link to the UNO.
+
+**How Link was confirmed as GPIO13**, without a meter: the firmware drives
+GPIO13 HIGH at boot and LOW once the car joins the network, and D2 went out and
+then came back on, in step with those two writes. So D2 is **active low**, lit
+through its resistor from 3.3 V when the pin is low. Expect it to glow at about
+half brightness whenever the audio build runs, because the bit clock toggles
+continuously, through silence as well.
 
 Worked out first from Elegoo's schematic, `elegoo-docs/04 Related chip
 information/ESP32-WROVER-Camera-V1.0-Shield.pdf`, where the same pads are test
