@@ -54,7 +54,7 @@ from elegoo import (Car, CarConfig, CarError, Direction,
                     DRIVE_SPEED, TURN_SPEED, DRIVE_SPEED_MAX,
                     TURN_DEG_PER_MS, DRIVE_MM_PER_MS)
 from safety import SafetyLoop, SafetyConfig
-from voice import Voice, RobotSink, DEFAULT_RATE_WPM
+from voice import Voice
 import personas
 
 try:
@@ -720,14 +720,6 @@ def main() -> int:
                     help="how the robot talks: " + personas.names()
                          + ". Style only; it never changes what the robot "
                            "does or how carefully it does it")
-    ap.add_argument("--voice-out", default="laptop",
-                    choices=["laptop", "robot"],
-                    help="where the voice comes out. robot needs the "
-                         "MAX98357A fitted and the camera firmware built "
-                         "with AUDIO_ENABLED; `python voice.py --robot HOST` "
-                         "tests that on its own first")
-    ap.add_argument("--volume", type=int, default=70,
-                    help="robot speaker volume, 0 to 100, default %(default)s")
     ap.add_argument("--voice-name", default=None,
                     help="which installed voice to use, matched loosely, e.g. "
                          "\"Zira\" or \"Hazel\". `python voice.py --list` "
@@ -799,15 +791,12 @@ def main() -> int:
     # Built before the try so the finally below can always shut it up, and
     # after the persona because the persona chooses a speaking rate that suits
     # it. An explicit --voice-rate still wins.
-    cfg = CarConfig.from_env(**({"host": args.host} if args.host else {}))
-    rate = args.voice_rate if args.voice_rate is not None else persona.rate
-    sink = None
-    if args.voice_out == "robot" and not args.no_voice:
-        # Out of the robot's own speaker. Rendered here, played there.
-        sink = RobotSink(cfg.host, rate=rate or DEFAULT_RATE_WPM,
-                         voice=args.voice_name, volume=args.volume)
-    voice = Voice(sink=sink, enabled=not args.no_voice, rate=rate,
+    voice = Voice(enabled=not args.no_voice,
+                  rate=(args.voice_rate if args.voice_rate is not None
+                        else persona.rate),
                   voice=args.voice_name)
+
+    cfg = CarConfig.from_env(**({"host": args.host} if args.host else {}))
     # Where the head sits at the start of the run, and what `scan` surveys
     # with. Overridable because the tilt-to-aim mapping moves whenever the
     # servo horn slips, and nothing on the robot can measure it.

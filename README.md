@@ -173,14 +173,14 @@ key from the OneCore branch to the other one makes it visible; export the key,
 edit the path in the `.reg` file, and import it.
 
 If the built-in voices are not good enough, the better answer is a cloud
-synthesiser rather than fighting the registry. It also fits the robot plan: the
-host renders audio either way, and a cloud engine hands you the bytes directly,
-which is exactly what gets POSTed to the ESP32.
+synthesiser rather than fighting the registry.
 
-**It will sound the same through the robot.** Synthesis stays on the host in
-both phases; the speaker only reproduces what the host renders. What will
-change is the fidelity: a 30 mm driver with no enclosure has no bass, so a
-clear mid-forward voice survives it better than a warm one.
+**To make the voice come from the robot**, pair a small Bluetooth speaker with
+the laptop, make it the default output, and fix it to the chassis behind the
+head. No firmware is involved. If it answers phone calls, Windows shows it as
+two devices: pick the **Stereo** one, because the Hands-Free one is phone-call
+quality. Untick *Handsfree Telephony* in its properties if Windows keeps
+switching back.
 
 ## What is not in this repository
 

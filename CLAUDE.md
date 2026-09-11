@@ -706,71 +706,29 @@ heartbeat gives up at about 3.5 s, rather than at the end of the move.
 Durations are capped far below that and `halt()` is verified.
 
 
-### The speaker
+### A speaker on the robot: shelved in favour of Bluetooth
 
-A MAX98357A I2S amplifier driving a small speaker, added 2026-09-10 so the
-robot speaks its narration itself. Synthesis stays on the host: `RobotSink` in
-`voice.py` renders each line to a 16 kHz mono WAV and POSTs it to `/say` on the
-camera module, which plays it on **I2S1**. I2S0 belongs to the camera: on the
-original ESP32 the camera driver runs its parallel interface on it.
+A MAX98357A I2S amplifier wired to the camera module was designed, written and
+then **dropped on 2026-09-11**, before it was ever compiled or soldered. The
+firmware is back as it was. The voice comes from the laptop's audio output, so
+a small Bluetooth speaker fixed to the chassis makes it come from the robot with
+no firmware at all. The reason was the soldering: fine work on the camera board,
+beside the serial link to the UNO. Recorded so a second attempt starts from
+what was learned:
 
-**Wiring, on the V1.5 board fitted here.** Its back, the module side, carries
-labelled pads. Confirmed from photographs 2026-09-10, which were mirrored:
-go by the printed labels, not by which side a pad seems to be on.
-
-| Amp | Pad label | Signal |
-| --- | --- | --- |
-| VIN | **VCC** | the car's 5 V |
-| GND | **GND** | |
-| BCLK | **Link** | GPIO13, front LED D2, confirmed 2026-09-10 |
-| LRC | **IO0** | GPIO0; the amp cannot pull the strap pin low at reset |
-| DIN | **TXD0** | GPIO1; see the trade below |
-| GAIN | 100 kOhm to VIN | 3 dB, for a small driver |
-
-**Never touch TXD1 or RXD1.** They are the serial link to the UNO.
-
-**How Link was confirmed as GPIO13**, without a meter: the firmware drives
-GPIO13 HIGH at boot and LOW once the car joins the network, and D2 went out and
-then came back on, in step with those two writes. So D2 is **active low**, lit
-through its resistor from 3.3 V when the pin is low. Expect it to glow at about
-half brightness whenever the audio build runs, because the bit clock toggles
-continuously, through silence as well.
-
-Worked out first from Elegoo's schematic, `elegoo-docs/04 Related chip
-information/ESP32-WROVER-Camera-V1.0-Shield.pdf`, where the same pads are test
-points T13, T6, T14, T10 and T11.
-
-**Two corrections to what was first proposed**, both caught by reading the
-schematic rather than the pinout guides:
-
-- **GPIO 2 and 14 are not broken out.** They reach the module's edge and
-  nowhere else. So DIN goes on **TXD0**, GPIO1, which has a pad. The trade:
-  USB debug output stops once audio starts, because the pin now carries
-  audio, and the boot ROM's text comes out of the speaker as a short buzz at
-  power on. The alternative is a wire soldered to GPIO14's castellation at
-  1.27 mm pitch, next to a strapping pin that stops the board booting if
-  bridged; `I2S_DOUT_PIN 14` selects it.
-- **Not 3.3 V.** The board's 3.3 V is an AP2112K rated at 600 mA that already
-  feeds the radio and the camera. Sharing it with an amplifier is the brown
-  out that cost a day. Take 5 V from the car instead; 3.3 V logic drives the
-  amp's inputs fine at 5 V.
-
-GPIO 16 and 17 look free on every pinout and are the WROVER's PSRAM.
-
-**Firmware traps, written into the code as comments:** zero-initialising
-`i2s_pin_config_t` leaves the master clock on GPIO0, which silently steals it
-from LRC; and zeroing the DMA buffer after a clip clips the end of every
-sentence. GPIO13's status LED is dropped when audio is built in.
-
-**Policy.** `/say` answers 202 as soon as a clip is queued, because the same
-server answers `/capture`. The robot plays each sentence to the end and keeps at
-most one waiting, which a newer one replaces. Cutting the playing clip short
-instead would lose the end of every sentence, which is where the robot says
-what it is about to do.
-
-**Not yet compiled or run.** Written 2026-09-10 against arduino-esp32 2.0.17,
-the core installed on the build machine, which is IDF 4.4 and the legacy
-`driver/i2s.h` API. The first compile in the IDE is the first check.
+- **Only GPIO13 and GPIO0 are on pads.** The V1.5 board's back carries labelled
+  pads: VCC, GND, IO0, **Link** (GPIO13, drives front LED D2, active low),
+  TXD0 (GPIO1, the USB debug output), and TXD1 and RXD1, which are the UNO
+  link and must never be touched. GPIO 2 and 14 reach only the module's edge.
+  16 and 17 are the WROVER's PSRAM, whatever pinout guides say.
+- **Not from the board's 3.3 V.** It is a 600 mA AP2112K already feeding the
+  radio and camera. Use the car's 5 V.
+- **Audio would need I2S1**, because the camera driver uses I2S0. And a
+  zero-initialised `i2s_pin_config_t` puts the master clock on GPIO0.
+- The schematic is `elegoo-docs/04 Related chip information/
+  ESP32-WROVER-Camera-V1.0-Shield.pdf`. It was there all along; reading it first
+  would have saved a round of wrong pin advice.
+- The full implementation is in git history, commits `627f21f` to `ff2cc1a`.
 
 ## Open questions
 

@@ -25,11 +25,12 @@ dropped rather than played late. Narration that describes a decision two turns
 ago is worse than silence, because it is actively misleading about where the
 robot is now.
 
-**The sink is swappable on purpose.** Today the laptop speaks. The intended
-end state is the robot speaking, through a MAX98357A amplifier on the ESP32's
-I2S pins, with the host doing the synthesis and posting audio to the camera
-module. That is a different `Sink` and nothing else changes: `agent.py` never
-learns where the sound comes out.
+**The sound comes out of the laptop's audio output**, so to make it come from
+the robot, pair a small Bluetooth speaker, set it as the default output, and
+put it on the chassis. An amplifier wired to the ESP32 was designed and then
+shelved on 2026-09-11 in favour of that: the soldering was fine pitch next to
+the UNO link, and a Bluetooth speaker needs no firmware at all. The `Sink`
+class stays, so another destination is a new subclass and nothing else.
 
 **It degrades to silence.** No speech engine, a broken one, a synthesiser that
 throws halfway through: all of it is a warning on stderr once, and then the run
@@ -46,7 +47,7 @@ import sys
 import threading
 from typing import Optional
 
-__all__ = ["Voice", "Sink", "Pyttsx3Sink", "PowerShellSink", "RobotSink",
+__all__ = ["Voice", "Sink", "Pyttsx3Sink", "PowerShellSink",
            "best_sink", "shorten", "speakable"]
 
 # One sentence, or about this many characters, whichever comes first. Was 180,
@@ -198,7 +199,7 @@ class PowerShellSink(Sink):
     # command. SelectVoice throws on an unknown name, so it is matched loosely
     # against the installed list and skipped if nothing matches: a wrong
     # --voice should mean the default voice, not a silent run.
-    PREAMBLE = (
+    SCRIPT = (
         "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new(); "
         "Add-Type -AssemblyName System.Speech; "
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
@@ -208,21 +209,7 @@ class PowerShellSink(Sink):
         "       ? { $_.VoiceInfo.Name -like \"*$env:VOICE_NAME*\" } | "
         "       select -First 1; "
         "  if ($m) { $s.SelectVoice($m.VoiceInfo.Name) } } "
-    )
-
-    # Out of the laptop's speakers.
-    SCRIPT = PREAMBLE + "$s.Speak([Console]::In.ReadToEnd())"
-
-    # Into a WAV file instead, in the one format the robot's /say accepts:
-    # 16 kHz, 16 bit, mono. Dispose is what finalises the header, so it must
-    # run before the file is read.
-    RENDER = PREAMBLE + (
-        "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo("
-        "16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, "
-        "[System.Speech.AudioFormat.AudioChannel]::Mono); "
-        "$s.SetOutputToWaveFile($env:VOICE_OUT, $f); "
-        "$s.Speak([Console]::In.ReadToEnd()); "
-        "$s.Dispose()"
+        "$s.Speak([Console]::In.ReadToEnd())"
     )
 
     LIST = (
@@ -264,85 +251,6 @@ class PowerShellSink(Sink):
                        encoding="utf-8", errors="replace",
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=60)
-
-    def render_wav(self, text: str) -> bytes:
-        """The same voice, rendered to 16 kHz mono WAV bytes rather than played.
-
-        Goes through a temporary file because System.Speech writes WAV headers
-        properly only to a file it can seek in.
-        """
-        import os
-        import tempfile
-        fd, path = tempfile.mkstemp(suffix=".wav", prefix="robot_say_")
-        os.close(fd)
-        try:
-            env = dict(os.environ, VOICE_RATE=str(self.rate),
-                       VOICE_NAME=self.voice, VOICE_OUT=path)
-            subprocess.run([self.exe, "-NoProfile", "-NonInteractive",
-                            "-Command", self.RENDER],
-                           input=text, text=True, env=env,
-                           encoding="utf-8", errors="replace",
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=60, check=True)
-            with open(path, "rb") as f:
-                return f.read()
-        finally:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-
-
-class RobotSink(Sink):
-    """Speech out of the robot itself, through its own speaker.
-
-    Synthesis stays here on the host, because the ESP32 has neither the room
-    nor the quality for it. Each line is rendered to a 16 kHz mono WAV with the
-    same Windows voice the laptop uses, and POSTed to `/say` on the camera
-    module, which buffers it in PSRAM and clocks it out over I2S1 to a
-    MAX98357A amplifier.
-
-    `/say` answers as soon as the clip is queued, so this returns in well under
-    a second and the worker is free for the next line. The robot plays each
-    sentence to the end and keeps at most one waiting behind it, replacing a
-    waiting one with anything newer: the same policy as the laptop path, in the
-    same place it matters, next to the speaker.
-
-    Wiring and pins are in the firmware, `elegoo_cam_station.ino`, under
-    "audio". They are not the ones first proposed: GPIO 2 and 14 turned out not
-    to be broken out on this board, and its 3.3 V regulator is too small to
-    share with an amplifier.
-    """
-
-    name = "robot"
-
-    def __init__(self, host: str, rate: Optional[int] = None,
-                 voice: Optional[str] = None, volume: int = 70,
-                 port: int = 80, timeout: float = 5.0):
-        self.renderer = PowerShellSink(rate=rate, voice=voice)
-        volume = max(0, min(100, int(volume)))
-        self.url = f"http://{host}:{port}/say?vol={volume}"
-        self.timeout = timeout
-
-    def speak(self, text: str) -> None:
-        import urllib.error
-        import urllib.request
-        wav = self.renderer.render_wav(text)
-        request = urllib.request.Request(
-            self.url, data=wav, method="POST",
-            headers={"Content-Type": "audio/wav"})
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as r:
-                r.read()
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                # Say what to do, not just what went wrong: this is the one
-                # error every first attempt will hit.
-                raise RuntimeError(
-                    "the camera firmware has no /say endpoint. Flash the "
-                    "build with AUDIO_ENABLED 1") from None
-            detail = exc.read().decode("utf-8", "replace").strip()
-            raise RuntimeError(f"/say answered {exc.code}: {detail}") from None
 
 
 def best_sink(rate: Optional[int] = None,
@@ -497,29 +405,18 @@ if __name__ == "__main__":
     if "--list" in sys.argv:
         list_voices()
         raise SystemExit(0)
-    def take(flag):
-        if flag in sys.argv:
-            i = sys.argv.index(flag)
-            value = sys.argv[i + 1]
-            del sys.argv[i:i + 2]
-            return value
-        return None
-
-    voice_name = take("--voice")
-    # --robot HOST sends the lines to the robot's speaker instead of playing
-    # them here. The bring-up test for the amplifier, before involving the
-    # agent at all: if this does not produce sound, nothing else will.
-    robot = take("--robot")
-    volume = int(take("--vol") or 70)
+    voice_name = None
+    if "--voice" in sys.argv:
+        i = sys.argv.index("--voice")
+        voice_name = sys.argv[i + 1]
+        del sys.argv[i:i + 2]
     lines = sys.argv[1:] or [
         "Scanning the room.",
         "A white ball by the couch, about thirty degrees to the right. "
         "Turning to face it.",
         "Close now. Stopping here.",
     ]
-    sink = (RobotSink(robot, rate=DEFAULT_RATE_WPM, voice=voice_name,
-                      volume=volume) if robot else None)
-    with Voice(sink=sink, voice=voice_name) as v:
+    with Voice(voice=voice_name) as v:
         print(v.describe)
         for line in lines:
             print(f"  {shorten(line)}")
