@@ -706,6 +706,32 @@ heartbeat gives up at about 3.5 s, rather than at the end of the move.
 Durations are capped far below that and `halt()` is verified.
 
 
+### Talking to it
+
+`--listen`, added 2026-09-11. Push to talk on the laptop, Enter to start and
+Enter to stop, transcribed locally with faster-whisper (`base.en`, int8, CPU),
+in `ears.py`. What was said is appended to the next user turn as "The person
+just said: ...". With `--listen` a report means "done, waiting", the turn cap
+applies per instruction, and the session ends at Ctrl+C.
+
+Three decisions worth keeping:
+
+- **A spoken stop bypasses the model.** It halts through
+  `SafetyLoop.emergency_stop` and `Car.halt` from the transcription thread, and
+  sets a hold that makes `Pilot.execute` refuse drive and turn until the person
+  says anything else. That refusal matters as much as the halt: the model is
+  usually mid-thought when the person speaks, and its next call is often a
+  drive it decided on before hearing them.
+- **The microphone is the laptop's.** A Bluetooth speaker's microphone only
+  works over the phone-call profile, which drops the output to phone quality
+  too; a microphone on the robot hears motors; and it would hear the robot.
+  The voice is paused while recording for the same last reason.
+- **Conversation shape is tested end to end** in the scratchpad's
+  `t_listen.py`, with a scripted model and a scripted person: strict
+  alternation, every tool call answered with its results first, a held drive
+  refused, and an instruction arriving after a report. The API rejects
+  malformed histories, so that is the part worth proving without hardware.
+
 ### A speaker on the robot: shelved in favour of Bluetooth
 
 A MAX98357A I2S amplifier wired to the camera module was designed, written and

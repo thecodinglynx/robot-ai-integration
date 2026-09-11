@@ -175,6 +175,32 @@ edit the path in the `.reg` file, and import it.
 If the built-in voices are not good enough, the better answer is a cloud
 synthesiser rather than fighting the registry.
 
+## Talking to the robot
+
+```bash
+pip install sounddevice faster-whisper
+python ears.py                                        # check the microphone
+python agent.py --host 192.168.1.211 --listen         # then talk to it
+```
+
+Press Enter, speak, press Enter again. What you said is transcribed on the
+laptop and reaches the robot on its next turn. `--task` becomes optional: the
+robot waits for you, does what you say, reports back, and waits again, until
+Ctrl+C. Say something new mid-task and it changes course.
+
+**Saying "stop", "halt" or "freeze" halts the car straight away**, without
+waiting for the model, and it then refuses to move until you speak again. It
+still takes about a second to transcribe, so the power switch and Ctrl+C remain
+the real emergency stops.
+
+The microphone is the laptop's on purpose, not one on the robot: a Bluetooth
+speaker's microphone drops its sound to phone quality while open, a microphone
+on the robot would mostly hear the motors, and it would hear the robot's own
+voice. For the same reason the robot stays quiet while you are talking.
+
+The speech model downloads once, about 150 MB. `--stt-model tiny.en` is
+quicker, `small.en` more accurate.
+
 **To make the voice come from the robot**, pair a small Bluetooth speaker with
 the laptop, make it the default output, and fix it to the chassis behind the
 head. No firmware is involved. If it answers phone calls, Windows shows it as

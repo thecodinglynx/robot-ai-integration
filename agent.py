@@ -55,6 +55,7 @@ from elegoo import (Car, CarConfig, CarError, Direction,
                     TURN_DEG_PER_MS, DRIVE_MM_PER_MS)
 from safety import SafetyLoop, SafetyConfig
 from voice import Voice
+from ears import Ears, ListenUnavailable
 import personas
 
 try:
@@ -80,6 +81,28 @@ except ImportError:          # importable without the SDK, so the robot side
 DEFAULT_MODEL = "claude-sonnet-5"
 
 PAN_MIN, PAN_MAX, PAN_CENTRE = 62, 118, 90
+
+# Appended to the system prompt with --listen.
+LISTENING = """
+THE PERSON CAN TALK TO YOU
+
+Someone in the room can speak to you. Their words arrive transcribed, as "The
+person just said: ...", alongside the result of your last action. They may give
+you a task, change the one you are on, or ask you something.
+
+- **Their latest words override your plan.** If they redirect you, follow the
+  new instruction rather than finishing the old one.
+- **Transcription is done by a machine and can be wrong.** If an instruction
+  makes no sense, say what you think you heard and ask, in your spoken line,
+  rather than guessing at something risky.
+- **If they said stop, you have already been halted**, and you will not be
+  allowed to drive or turn until they speak again. Call report and wait.
+- **When you have done what they asked, call report.** That is not the end of
+  the session: you will wait, and their next instruction will arrive the same
+  way. Say what you did in the report's spoken line.
+- **If they ask a question, answer it in your spoken line**, from what you can
+  actually see, then call report.
+"""
 
 SYSTEM = """You are driving a small four wheeled robot around a room, through a
 camera mounted 16 cm off the floor on a head that can pan and tilt.
@@ -464,11 +487,13 @@ def bearing_note(pan: int) -> str:
 
 class Pilot:
     def __init__(self, car: Car, guard: SafetyLoop, log: RunLog,
-                 survey_tilt: int = TILT_SCAN):
+                 survey_tilt: int = TILT_SCAN, hold=None):
         self.car = car
         self.guard = guard
         self.log = log
         self.survey_tilt = survey_tilt
+        # Set by a spoken stop, cleared by the next thing said. See ears.py.
+        self.hold = hold
         self.finished: Optional[Dict[str, Any]] = None
 
     # ---------- observation ----------
@@ -498,6 +523,17 @@ class Pilot:
             handler = getattr(self, f"_do_{name}")
         except AttributeError:
             return Outcome(f"no such tool: {name}", is_error=True)
+
+        # A spoken stop outranks the model. The model may well have decided on
+        # a drive before the person spoke, since it was thinking while they
+        # talked, and that decision must not be carried out. So nothing that
+        # moves the car runs until the person says something else.
+        if (name in ("drive", "turn") and self.hold is not None
+                and self.hold.is_set()):
+            return Outcome("Not done. The person said stop, so you are "
+                           "holding still until they speak again. Do not try "
+                           "to move; call report and wait for them.",
+                           frame=self.frame())
         try:
             outcome = handler(args)
         except CarError as exc:
@@ -701,6 +737,47 @@ def tool_result_content(outcome, sensors_text, log, turn):
     return content, None
 
 
+def heard_text(said: List[str], holding: bool) -> str:
+    """How something the person said is put to the model."""
+    joined = " then ".join(f'"{s}"' for s in said)
+    text = f"The person just said: {joined}"
+    if holding:
+        text += (" You have been halted, and you are holding still until they "
+                 "speak again.")
+    return text
+
+
+def wait_for_words(listener) -> str:
+    """Block until the person says something, while staying interruptible.
+
+    Polls rather than blocking outright: on Windows a queue wait with no
+    timeout cannot be interrupted, so Ctrl+C would do nothing until the next
+    time someone spoke.
+    """
+    print("\nwaiting for you: press Enter, speak, press Enter again")
+    while True:
+        said = listener.wait(timeout=0.5)
+        if said is not None:
+            return said
+
+
+def resume_with(messages: List[Dict[str, Any]], said: List[str],
+                pilot: "Pilot", listener) -> None:
+    """Put a new instruction into the conversation, with a fresh view.
+
+    Appended to the last user message rather than sent as a new one, because
+    the API needs user and assistant turns to alternate and the last message is
+    always the user's tool results.
+    """
+    content = messages[-1]["content"]
+    content.append({"type": "text",
+                    "text": f"{heard_text(said, listener.hold.is_set())}\n\n"
+                            f"{pilot.sensors()}"})
+    frame = pilot.frame()
+    if frame:
+        content.append(image_block(frame))
+
+
 def image_block(jpeg: bytes) -> Dict[str, Any]:
     return {"type": "image",
             "source": {"type": "base64", "media_type": "image/jpeg",
@@ -710,9 +787,19 @@ def image_block(jpeg: bytes) -> Dict[str, Any]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default=None)
-    ap.add_argument("--task", required=True,
+    ap.add_argument("--task", default=None,
                     help='what to attempt, e.g. "find the red box and drive '
-                         'to it"')
+                         'to it". Optional with --listen, where you can say it '
+                         'instead')
+    ap.add_argument("--listen", action="store_true",
+                    help="talk to the robot: press Enter, speak, press Enter "
+                         "again. Transcribed on this machine with "
+                         "faster-whisper. Saying stop halts the car at once, "
+                         "without waiting for the model. Needs `pip install "
+                         "sounddevice faster-whisper`")
+    ap.add_argument("--stt-model", default="base.en",
+                    help="speech to text model, default %(default)s. tiny.en "
+                         "is quicker, small.en more accurate")
     ap.add_argument("--no-voice", action="store_true",
                     help="do not speak the narration aloud")
     ap.add_argument("--persona", default=personas.DEFAULT_PERSONA,
@@ -770,6 +857,8 @@ def main() -> int:
     ap.add_argument("--min-turn-s", type=float, default=0.0,
                     help="floor on how fast turns may run, seconds")
     args = ap.parse_args()
+    if not args.task and not args.listen:
+        ap.error("give a --task, or use --listen and say one")
 
     if anthropic is None:
         print("the anthropic SDK is missing. Install it with:")
@@ -786,7 +875,9 @@ def main() -> int:
     # and concrete labelled examples beat a later description of tone every
     # time. There is now exactly one place that says how to talk.
     system_prompt = SYSTEM.replace("{PERSONA}", persona.prompt)
-    log = RunLog(args.logs, args.task, args.model,
+    if args.listen:
+        system_prompt += LISTENING
+    log = RunLog(args.logs, args.task or "(spoken)", args.model,
                  system=system_prompt, persona=persona.name)
     # Built before the try so the finally below can always shut it up, and
     # after the persona because the persona chooses a speaking rate that suits
@@ -795,6 +886,17 @@ def main() -> int:
                   rate=(args.voice_rate if args.voice_rate is not None
                         else persona.rate),
                   voice=args.voice_name)
+
+    # Loaded before the car is connected. The speech model can take a while on
+    # first use, while it downloads, and there is no reason to hold a socket
+    # open to the robot through that.
+    listener = None
+    if args.listen:
+        try:
+            listener = Ears(model=args.stt_model)
+        except ListenUnavailable as exc:
+            print(f"cannot listen: {exc}")
+            return 2
 
     cfg = CarConfig.from_env(**({"host": args.host} if args.host else {}))
     # Where the head sits at the start of the run, and what `scan` surveys
@@ -808,7 +910,20 @@ def main() -> int:
         if args.stop_cm is not None:
             safety_cfg.stop_cm = args.stop_cm
         with Car(cfg) as car, SafetyLoop(car, safety_cfg) as guard:
-            pilot = Pilot(car, guard, log, survey_tilt=survey_tilt)
+            pilot = Pilot(car, guard, log, survey_tilt=survey_tilt,
+                          hold=listener.hold if listener else None)
+            if listener:
+                # A spoken stop halts the car from the transcription thread,
+                # straight through the safety layer, without the model.
+                def halt_now(text):
+                    guard.emergency_stop(f'the person said "{text}"')
+                    car.halt()
+                listener.on_stop = halt_now
+                # Mute the robot while you are talking, so the microphone does
+                # not pick up its voice and hand it back as an instruction.
+                listener.on_recording = lambda active: setattr(
+                    voice, "paused", active)
+                listener.start()
             # Aim the head before the opening frame, not after. The first
             # picture of a run is the one the whole plan is built on.
             car.tilt(survey_tilt)
@@ -821,7 +936,9 @@ def main() -> int:
                 car.camera("framesize", code)
                 time.sleep(0.4)
                 pilot.frame()   # discard one: the sensor restarts on a resize
-            except CarError as exc:
+            except (CarError, OSError) as exc:
+                # OSError too: this is an HTTP call, and a camera that does not
+                # answer it should cost the resolution setting, not the run.
                 print(f"could not set the camera resolution: {exc}")
             print(f"camera: {args.framesize} ({size}), about {tokens} tokens "
                   f"a frame, keeping {args.keep_frames} in the conversation")
@@ -831,15 +948,20 @@ def main() -> int:
             # in a flat voice, immediately before the first tool call spoke in
             # character, which undercut the persona in the first two seconds.
 
-            print(f"task: {args.task}")
+            print(f"task: {args.task or '(you will say it)'}")
             print(f"model: {args.model}, effort {args.effort}")
             print(f"persona: {persona.name}, {persona.summary}")
             print(f"{guard.describe()}\n")
 
+            if args.task:
+                opening_text = f"Task: {args.task}"
+            else:
+                opening_text = heard_text([wait_for_words(listener)],
+                                          listener.hold.is_set())
             first_frame = pilot.frame()
             opening: List[Dict[str, Any]] = [
                 {"type": "text",
-                 "text": f"Task: {args.task}\n\n{pilot.sensors()}\n\n"
+                 "text": f"{opening_text}\n\n{pilot.sensors()}\n\n"
                          f"This is what you can see now."}]
             if first_frame:
                 opening.append(image_block(first_frame))
@@ -849,7 +971,24 @@ def main() -> int:
                 {"role": "user", "content": opening}]
             totals = {"input": 0, "output": 0, "cache_read": 0}
 
-            for turn in range(1, args.turns + 1):
+            # Without --listen the run ends at a report or at the turn cap, as
+            # before. With it, a report means "done, waiting", the cap applies
+            # to each instruction rather than to the whole session, and the
+            # session ends when you press Ctrl+C.
+            turn = 0
+            turns_on_this = 0
+            while True:
+                if turns_on_this >= args.turns:
+                    if not listener:
+                        break
+                    car.halt()
+                    print(f"\n{args.turns} turns on that without a report. "
+                          f"Halted.")
+                    resume_with(messages, [wait_for_words(listener)], pilot,
+                                listener)
+                    turns_on_this = 0
+                turn += 1
+                turns_on_this += 1
                 started = time.time()
                 response = client.messages.create(
                     model=args.model,
@@ -877,12 +1016,23 @@ def main() -> int:
 
                 calls = [b for b in response.content if b.type == "tool_use"]
                 if not calls:
-                    print(f"[{turn}] no tool call, stopping "
-                          f"({response.stop_reason})")
                     log.turn({"turn": turn, "said": said, "tool": None,
                               "stop_reason": response.stop_reason,
                               "latency_s": round(latency, 2)})
-                    break
+                    if not listener:
+                        print(f"[{turn}] no tool call, stopping "
+                              f"({response.stop_reason})")
+                        break
+                    # Listening, a reply with no tool is usually an answer to
+                    # something asked. Say it, then wait to be told more.
+                    voice.say(said)
+                    messages.append({"role": "assistant",
+                                     "content": response.content})
+                    messages.append({"role": "user", "content": []})
+                    resume_with(messages, [wait_for_words(listener)], pilot,
+                                listener)
+                    turns_on_this = 0
+                    continue
 
                 messages.append({"role": "assistant",
                                  "content": response.content})
@@ -925,11 +1075,28 @@ def main() -> int:
                         },
                     })
 
+                # Anything the person said while that action ran, or while the
+                # model was thinking, goes in with its result.
+                heard = listener.drain() if listener else []
+                if heard:
+                    results.append({"type": "text",
+                                    "text": heard_text(heard,
+                                                       listener.hold.is_set())})
                 messages.append({"role": "user", "content": results})
                 prune_images(messages, args.keep_frames)
 
                 if pilot.finished:
-                    break
+                    if not listener:
+                        break
+                    print(f"  done: {pilot.finished['summary']}")
+                    pilot.finished = None
+                    turns_on_this = 0
+                    # Told something new while reporting? Then that is already
+                    # in the message, and there is nothing to wait for.
+                    if not heard:
+                        resume_with(messages, [wait_for_words(listener)],
+                                    pilot, listener)
+                    continue
 
                 spare = args.min_turn_s - (time.time() - started)
                 if spare > 0:
@@ -958,8 +1125,10 @@ def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        print("\nstopped by hand")
-        return 1
+        # With --listen this is the normal way to finish, not a failure.
+        print("\nstopped by hand" if not listener else "\nsession ended")
+        print(f"run logged to {log.dir}")
+        return 1 if not listener else 0
     except anthropic.APIStatusError as exc:
         print(f"\nthe model API returned {exc.status_code}: {exc.message}")
         return 2
@@ -970,6 +1139,8 @@ def main() -> int:
         print(f"\nfailed: {type(exc).__name__}: {exc}")
         return 2
     finally:
+        if listener:
+            listener.close()
         # Let a finished sentence finish, but never leave a voice talking
         # about a robot that has stopped.
         voice.close(wait=6.0 if voice.spoken else 0.5)

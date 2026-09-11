@@ -287,6 +287,11 @@ class Voice:
         self.sink = sink if sink is not None else (
             best_sink(rate=rate, voice=voice) if enabled else None)
         self.dropped = 0
+        # Set while the person is talking to the robot, so the microphone does
+        # not pick up the robot's voice and hand it back as an instruction.
+        # Lines said while paused are dropped, not held: by the time the person
+        # finishes they describe a moment that has passed.
+        self.paused = False
         self.spoken = 0
         self._note = on_note
         self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=depth)
@@ -310,7 +315,7 @@ class Voice:
 
     def say(self, text: str) -> None:
         """Queue something to be said. Never blocks, never raises."""
-        if not self.enabled or not text:
+        if not self.enabled or not text or self.paused:
             return
         text = shorten(text)
         if not text:
