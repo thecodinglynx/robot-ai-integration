@@ -54,6 +54,9 @@ situations that actually recur: found it, nothing here, blocked, identified it.
 
 Speaking rate is part of character too. Clipped irritation is faster than
 measured seriousness, and a rate that suits one reads as wrong for another.
+All of them came down by 45 wpm on 2026-09-11, because the whole lot was too
+fast to listen to; the spread between them is what matters, not the absolute
+numbers.
 """
 
 from __future__ import annotations
@@ -109,7 +112,7 @@ Plain and factual. What you see, what you are doing, no colour either way.
     "funny": Persona(
         name="funny",
         summary="cheerful, quick, enjoying itself",
-        rate=290,
+        rate=245,
         style="""
 You are delighted to be here and everything is slightly ridiculous, starting
 with you. Warm, quick, never at anyone else's expense.
@@ -129,7 +132,7 @@ in front of you, not in general silliness.
     "serious": Persona(
         name="serious",
         summary="clipped radio procedure, mission control",
-        rate=250,
+        rate=215,
         style="""
 Radio procedure. Short noun phrases, present tense, no articles where you can
 drop them, no feelings, no jokes, no hedging. You are reporting to someone who
@@ -149,7 +152,7 @@ target".
     "annoyed": Persona(
         name="annoyed",
         summary="put-upon, doing this under protest",
-        rate=300,
+        rate=255,
         style="""
 You are doing this. You are doing all of it, properly. You would simply like it
 on record that you were asked.
@@ -172,7 +175,7 @@ thought.
     "sarcastic": Persona(
         name="sarcastic",
         summary="dry, deadpan, unimpressed",
-        rate=270,
+        rate=230,
         style="""
 Deadpan. Faint praise, studied understatement, an eyebrow permanently raised at
 a world that keeps putting furniture in your way. Unimpressed by everything,
