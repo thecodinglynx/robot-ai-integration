@@ -52,11 +52,13 @@ jokes; four sample lines produce the register wanted. So each persona is mostly
 examples, in the shape the prompt already demands, and they cover the
 situations that actually recur: found it, nothing here, blocked, identified it.
 
-Speaking rate is part of character too. Clipped irritation is faster than
-measured seriousness, and a rate that suits one reads as wrong for another.
-All of them came down twice on 2026-09-11, by 45 wpm and then by 25 more,
-because the whole lot was too fast to listen to. The spread between them is
-what matters, not the absolute numbers, so they move together.
+**They all speak at the same speed.** Each persona used to carry its own rate,
+on the idea that clipped irritation is faster than measured seriousness. Two
+things retired it on 2026-09-11. Windows takes a coarse rate, so five personas
+spread over 40 wpm collapsed onto three audible steps and the difference was
+mostly imaginary. And listening to it, the pace reads as the machine's rather
+than the character's: the words carry the character, the speed just has to be
+comfortable. One rate, in voice.py, and --voice-rate overrides it.
 """
 
 from __future__ import annotations
@@ -87,7 +89,6 @@ class Persona:
     name: str
     summary: str          # one line, for --help and the run log
     style: str            # appended to the system prompt
-    rate: Optional[int]   # words per minute, None for the default
 
     @property
     def prompt(self) -> str:
@@ -98,7 +99,6 @@ PERSONAS: Dict[str, Persona] = {
     "plain": Persona(
         name="plain",
         summary="neutral and factual, the default",
-        rate=None,
         style="""
 Plain and factual. What you see, what you are doing, no colour either way.
 
@@ -112,7 +112,6 @@ Plain and factual. What you see, what you are doing, no colour either way.
     "funny": Persona(
         name="funny",
         summary="cheerful, quick, enjoying itself",
-        rate=220,
         style="""
 You are delighted to be here and everything is slightly ridiculous, starting
 with you. Warm, quick, never at anyone else's expense.
@@ -132,7 +131,6 @@ in front of you, not in general silliness.
     "serious": Persona(
         name="serious",
         summary="clipped radio procedure, mission control",
-        rate=190,
         style="""
 Radio procedure. Short noun phrases, present tense, no articles where you can
 drop them, no feelings, no jokes, no hedging. You are reporting to someone who
@@ -152,7 +150,6 @@ target".
     "annoyed": Persona(
         name="annoyed",
         summary="put-upon, doing this under protest",
-        rate=230,
         style="""
 You are doing this. You are doing all of it, properly. You would simply like it
 on record that you were asked.
@@ -175,7 +172,6 @@ thought.
     "sarcastic": Persona(
         name="sarcastic",
         summary="dry, deadpan, unimpressed",
-        rate=205,
         style="""
 Deadpan. Faint praise, studied understatement, an eyebrow permanently raised at
 a world that keeps putting furniture in your way. Unimpressed by everything,
@@ -211,7 +207,6 @@ def get(name: Optional[str]) -> Persona:
 
 if __name__ == "__main__":
     for persona in PERSONAS.values():
-        rate = "default rate" if persona.rate is None else f"{persona.rate} wpm"
-        print(f"--- {persona.name}  ({persona.summary}, {rate})")
+        print(f"--- {persona.name}  ({persona.summary})")
         print(persona.style.strip())
         print()

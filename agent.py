@@ -885,12 +885,9 @@ def main() -> int:
         system_prompt += LISTENING
     log = RunLog(args.logs, args.task or "(spoken)", args.model,
                  system=system_prompt, persona=persona.name)
-    # Built before the try so the finally below can always shut it up, and
-    # after the persona because the persona chooses a speaking rate that suits
-    # it. An explicit --voice-rate still wins.
-    voice = Voice(enabled=not args.no_voice,
-                  rate=(args.voice_rate if args.voice_rate is not None
-                        else persona.rate),
+    # Built before the try so the finally below can always shut it up. One
+    # speaking rate for every persona, in voice.py: see the note there.
+    voice = Voice(enabled=not args.no_voice, rate=args.voice_rate,
                   voice=args.voice_name)
 
     # Loaded before the car is connected. The speech model can take a while on
