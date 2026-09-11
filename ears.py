@@ -200,7 +200,12 @@ class Ears:
                 return out
 
     def wait(self, timeout: Optional[float] = None) -> Optional[str]:
-        """Block until the person says something. None on timeout."""
+        """Wait for the person to say something. None if the timeout ran out.
+
+        **Always pass a timeout and loop.** A wait with no timeout cannot be
+        interrupted on Windows, so Ctrl+C does nothing until the next time
+        somebody speaks, which is the opposite of what Ctrl+C is for.
+        """
         try:
             return self.heard.get(timeout=timeout)
         except queue.Empty:
@@ -343,7 +348,9 @@ if __name__ == "__main__":
         print("Say something. Ctrl+C to quit.")
         try:
             while True:
-                said = ears.wait()
+                # Polled, not blocked: see Ears.wait. Blocking outright here
+                # made Ctrl+C do nothing at all until someone spoke.
+                said = ears.wait(timeout=0.3)
                 if said is not None:
                     print(f"  stop word: {is_stop(said)}, hold: "
                           f"{ears.hold.is_set()}")
