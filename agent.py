@@ -797,6 +797,12 @@ def main() -> int:
                          "faster-whisper. Saying stop halts the car at once, "
                          "without waiting for the model. Needs `pip install "
                          "sounddevice faster-whisper`")
+    ap.add_argument("--mic", default=None,
+                    help="which microphone, matched loosely by name, e.g. "
+                         "\"Realtek\". Worth pinning to the laptop's own: "
+                         "opening a Bluetooth speaker's microphone switches "
+                         "that speaker to phone-call quality. `python ears.py "
+                         "--devices` lists them")
     ap.add_argument("--stt-model", default="base.en",
                     help="speech to text model, default %(default)s. tiny.en "
                          "is quicker, small.en more accurate")
@@ -893,7 +899,7 @@ def main() -> int:
     listener = None
     if args.listen:
         try:
-            listener = Ears(model=args.stt_model)
+            listener = Ears(model=args.stt_model, mic=args.mic)
         except ListenUnavailable as exc:
             print(f"cannot listen: {exc}")
             return 2

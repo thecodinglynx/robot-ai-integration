@@ -87,6 +87,25 @@ def is_stop(text: str) -> bool:
     return any(w in STOP_WORDS for w in words)
 
 
+def microphones(sounddevice=None):
+    """Every input device, as (index, name) pairs."""
+    if sounddevice is None:
+        import sounddevice
+    return [(i, d["name"]) for i, d in enumerate(sounddevice.query_devices())
+            if d["max_input_channels"] > 0]
+
+
+def find_mic(sounddevice, wanted: str, on_note=print) -> Optional[int]:
+    """An input device index by loose name match, or None for the default."""
+    for index, name in microphones(sounddevice):
+        if wanted.lower() in name.lower():
+            on_note(f"microphone: {name}")
+            return index
+    on_note(f'no microphone matching "{wanted}", using the default. '
+            f"`python ears.py --devices` lists them")
+    return None
+
+
 class Ears:
     """Push to talk, transcription, and the stop that bypasses the model.
 
@@ -100,7 +119,8 @@ class Ears:
 
     def __init__(self, on_stop: Optional[Callable[[str], None]] = None,
                  on_recording: Optional[Callable[[bool], None]] = None,
-                 model: str = DEFAULT_MODEL, on_note=print):
+                 model: str = DEFAULT_MODEL, mic: Optional[str] = None,
+                 on_note=print):
         try:
             import numpy
             import sounddevice
@@ -118,6 +138,14 @@ class Ears:
         self._np = numpy
         self._sd = sounddevice
         self._note = on_note
+        # Which microphone, matched loosely against the device name.
+        #
+        # Worth pinning rather than taking the default. If the default input is
+        # a Bluetooth speaker's own microphone, Windows has to switch that
+        # device to the phone-call profile to open it, and the robot's voice
+        # drops to phone quality for as long as it is open. Naming the laptop's
+        # own microphone avoids the whole thing.
+        self.mic = find_mic(sounddevice, mic, on_note) if mic else None
         self.on_stop = on_stop
         self.on_recording = on_recording
 
@@ -201,7 +229,7 @@ class Ears:
             try:
                 self._stream = self._sd.InputStream(
                     samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-                    callback=self._on_audio)
+                    device=self.mic, callback=self._on_audio)
                 self._stream.start()
             except Exception as exc:
                 self._stream = None
@@ -293,8 +321,21 @@ class Ears:
 if __name__ == "__main__":
     # The microphone and the transcriber, on their own, before the robot is
     # involved at all: if this cannot hear you, nothing downstream will.
+    if "--devices" in sys.argv:
+        try:
+            for index, name in microphones():
+                print(f"  {index:2d}  {name}")
+        except ImportError:
+            print("pip install sounddevice faster-whisper")
+        raise SystemExit(0)
+
+    mic = None
+    if "--mic" in sys.argv:
+        i = sys.argv.index("--mic")
+        mic = sys.argv[i + 1]
     try:
-        ears = Ears(on_stop=lambda t: print("  [the car would halt here]"))
+        ears = Ears(mic=mic,
+                    on_stop=lambda t: print("  [the car would halt here]"))
     except ListenUnavailable as exc:
         print(exc)
         raise SystemExit(1)
