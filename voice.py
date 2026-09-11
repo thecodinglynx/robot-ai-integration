@@ -56,11 +56,12 @@ __all__ = ["Voice", "Sink", "Pyttsx3Sink", "PowerShellSink",
 # the time the sentence ends and the commentary is worse than useless.
 MAX_SPOKEN_CHARS = 110
 
-# Words per minute. A little above the ~200 both engines default to, because
-# the robot moves while it talks and the words have to keep up, but only a
-# little: this was 275 and that was too fast to listen to. --voice-rate
-# overrides, and each persona carries its own.
-DEFAULT_RATE_WPM = 230
+# Words per minute, near the ~200 both engines default to. It started at 275,
+# on the reasoning that the robot moves while it talks so the words have to
+# keep up. Listening to it settled that: comfortable to follow beats keeping
+# pace with the wheels. --voice-rate overrides, and each persona carries its
+# own.
+DEFAULT_RATE_WPM = 205
 
 
 # Symbols the model writes and a synthesiser cannot say. Two problems at once:
