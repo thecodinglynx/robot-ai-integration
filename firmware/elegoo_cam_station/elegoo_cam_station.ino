@@ -99,9 +99,15 @@ static const int HEARTBEAT_MISSES_ALLOWED = 3;
 //                 out of the speaker as a short buzz at power on.
 //
 // GPIO 16 and 17 look free and are not: on a WROVER they are the PSRAM.
-#define I2S_BCLK_PIN 13
-#define I2S_LRC_PIN   0
-#define I2S_DOUT_PIN 14
+// On the V1.5 board actually fitted, confirmed from photographs 2026-09-10,
+// the back carries labelled pads: VCC, RST, 3V3, GND, RXD1, Link down one edge
+// and VBUS, D+, D-, GND, TXD1, IO0, RXD0, TXD0 down the other. "Link" drives
+// the front LED Elegoo's sketch lights on GPIO13; IO0 and TXD0 are what they
+// say. So all three signals land on pads, with DOUT on TXD0 rather than on
+// GPIO14's castellation, and the trade described above is taken.
+#define I2S_BCLK_PIN 13   // pad "Link"
+#define I2S_LRC_PIN   0   // pad "IO0"
+#define I2S_DOUT_PIN  1   // pad "TXD0"; set to 14 to solder to the module edge
 
 // I2S1, not I2S0. On the original ESP32 the camera driver runs the parallel
 // camera interface on I2S0, so audio has to have the other one.
@@ -613,8 +619,11 @@ void setup() {
 
 #if AUDIO_ENABLED
   // After the camera, so the camera has I2S0 before anything asks for a port.
+  // Said before starting, because with DOUT on TXD0 nothing printed after
+  // this point reaches USB: the pin now carries audio. Test the speaker with
+  // `python voice.py --robot HOST` instead of watching the serial monitor.
+  DBG("starting audio on I2S1; USB debug may go quiet from here\n");
   audioOk = startAudio();
-  DBG(audioOk ? "audio ok on I2S1\n" : "audio init failed\n");
 #endif
 
   // Both modes at once. Station for the home network, access point so a failed
