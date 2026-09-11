@@ -706,6 +706,56 @@ heartbeat gives up at about 3.5 s, rather than at the end of the move.
 Durations are capped far below that and `halt()` is verified.
 
 
+### The speaker
+
+A MAX98357A I2S amplifier driving a small speaker, added 2026-09-10 so the
+robot speaks its narration itself. Synthesis stays on the host: `RobotSink` in
+`voice.py` renders each line to a 16 kHz mono WAV and POSTs it to `/say` on the
+camera module, which plays it on **I2S1**. I2S0 belongs to the camera: on the
+original ESP32 the camera driver runs its parallel interface on it.
+
+**Wiring, from Elegoo's schematic** (`elegoo-docs/04 Related chip information/
+ESP32-WROVER-Camera-V1.0-Shield.pdf`; the board here is V1.5, so check the pads
+exist before soldering):
+
+| Amp | Board | Why |
+| --- | --- | --- |
+| VIN | pad **T13**, VCC | the car's 5 V |
+| GND | pad **T6** or T4 | |
+| BCLK | pad **T14**, GPIO13 | the fastest signal, on the cleanest pin |
+| LRC | pad **T10**, GPIO0 | slow, and the amp cannot pull the strap pin low |
+| DIN | GPIO14, **module edge pin 13** | no pad; solder to the castellation |
+| GAIN | 100 kOhm to VIN | 3 dB, for a small driver |
+
+**Two corrections to what was first proposed**, both caught by reading the
+schematic rather than the pinout guides:
+
+- **GPIO 2 and 14 are not broken out.** They reach the module's edge and
+  nowhere else. Only GPIO13 (T14) and GPIO0 (T10) have pads. The alternative
+  for DIN is TXD0, GPIO1, on pad T11: no fine soldering, but it takes over the
+  USB debug output and the boot ROM's text comes out of the speaker as a buzz.
+- **Not 3.3 V.** The board's 3.3 V is an AP2112K rated at 600 mA that already
+  feeds the radio and the camera. Sharing it with an amplifier is the brown
+  out that cost a day. Take 5 V from the car instead; 3.3 V logic drives the
+  amp's inputs fine at 5 V.
+
+GPIO 16 and 17 look free on every pinout and are the WROVER's PSRAM.
+
+**Firmware traps, written into the code as comments:** zero-initialising
+`i2s_pin_config_t` leaves the master clock on GPIO0, which silently steals it
+from LRC; and zeroing the DMA buffer after a clip clips the end of every
+sentence. GPIO13's status LED is dropped when audio is built in.
+
+**Policy.** `/say` answers 202 as soon as a clip is queued, because the same
+server answers `/capture`. The robot plays each sentence to the end and keeps at
+most one waiting, which a newer one replaces. Cutting the playing clip short
+instead would lose the end of every sentence, which is where the robot says
+what it is about to do.
+
+**Not yet compiled or run.** Written 2026-09-10 against arduino-esp32 2.0.17,
+the core installed on the build machine, which is IDF 4.4 and the legacy
+`driver/i2s.h` API. The first compile in the IDE is the first check.
+
 ## Open questions
 
 Answered so far: the heartbeat and reply format on 2026-09-06, then the

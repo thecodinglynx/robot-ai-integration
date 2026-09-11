@@ -40,6 +40,7 @@
 
 #include "esp_camera.h"
 #include "esp_http_server.h"
+#include "driver/i2s.h"
 #include <WiFi.h>
 
 // ---------------------------------------------------------------- settings
@@ -71,8 +72,53 @@ static const uint32_t DEBUG_BAUD = 115200;
 static const uint32_t HEARTBEAT_INTERVAL_MS = 1000;
 static const int HEARTBEAT_MISSES_ALLOWED = 3;
 
-// Status LED, from Elegoo's sketch.
+// ------------------------------------------------------------------ audio
+//
+// A MAX98357A I2S amplifier driving a small speaker, so the robot can speak.
+// Synthesis happens on the host; this end only plays 16 bit mono PCM that
+// arrives as a WAV in an HTTP POST to /say.
+//
+// Set to 0 to build without it, which also gives GPIO13 back to the LED.
+#define AUDIO_ENABLED 1
+
+// Pins, chosen from Elegoo's schematic for this board (V1.0; check a V1.5
+// against it). Almost everything is taken by the camera, the UNO link and the
+// debug UART, and of what is left only two pins reach a solderable test pad:
+//
+//   BCLK  GPIO13  pad T14. The fastest signal, so it gets the cleanest pin.
+//   LRC   GPIO0   pad T10. The boot strap pin, which is fine here: the amp's
+//                 input is high impedance and cannot pull it low at reset, and
+//                 the frame clock is slow enough not to mind the auto-program
+//                 transistor hanging off it.
+//   DOUT  GPIO14  WROVER module edge pin 13, no pad; needs a wire soldered to
+//                 the castellation. Its neighbours are IO27 (pin 12, camera
+//                 XCLK) and IO12 (pin 14, a strapping pin: bridging to it can
+//                 stop the board booting). Alternatively set this to 1, TXD0 on
+//                 pad T11, which needs no fine soldering but takes over the USB
+//                 debug output: DBG goes silent and the boot ROM's messages come
+//                 out of the speaker as a short buzz at power on.
+//
+// GPIO 16 and 17 look free and are not: on a WROVER they are the PSRAM.
+#define I2S_BCLK_PIN 13
+#define I2S_LRC_PIN   0
+#define I2S_DOUT_PIN 14
+
+// I2S1, not I2S0. On the original ESP32 the camera driver runs the parallel
+// camera interface on I2S0, so audio has to have the other one.
+static const i2s_port_t AUDIO_PORT = I2S_NUM_1;
+
+// A few seconds of 16 kHz mono is a couple of hundred kilobytes, and this
+// lives in PSRAM. The cap is there to bound a bad request, not a real one.
+static const size_t AUDIO_MAX_BYTES = 1024 * 1024;
+static const uint8_t AUDIO_DEFAULT_VOLUME = 70;   // percent, of full scale
+
+// Status LED, from Elegoo's sketch. Lit while joining the network. GPIO13 is
+// the audio bit clock when audio is built in, so the LED goes.
+#if AUDIO_ENABLED && (I2S_BCLK_PIN == 13 || I2S_LRC_PIN == 13 || I2S_DOUT_PIN == 13)
+static const int LED_PIN = -1;
+#else
 static const int LED_PIN = 13;
+#endif
 
 // ------------------------------------------------------- camera pin map
 // CAMERA_MODEL_M5STACK_WIDE, straight out of Elegoo's camera_pins.h.
@@ -265,6 +311,201 @@ static esp_err_t status_handler(httpd_req_t *req) {
   return httpd_resp_send(req, json, n);
 }
 
+// -------------------------------------------------------------------- audio
+
+static bool audioOk = false;
+
+#if AUDIO_ENABLED
+
+struct Clip {
+  uint8_t *pcm;       // 16 bit little endian mono, in PSRAM, owned by holder
+  size_t bytes;
+  uint32_t rate;
+  uint8_t volume;     // percent
+};
+
+// Holds at most ONE clip waiting behind the one playing. A new clip replaces
+// a waiting one rather than queueing behind it, and the one playing always
+// finishes. That is the host's policy too: a sentence is heard whole, and
+// anything overtaken before it started is dropped, because narration about a
+// decision two moves ago is worse than silence. Cutting the playing clip short
+// instead would lose the end of every sentence, which is where the robot says
+// what it is about to do.
+static QueueHandle_t audioQueue = NULL;
+static uint32_t audioRate = 0;
+
+static void audioTask(void *) {
+  static const size_t CHUNK = 256;          // mono samples per write
+  static int16_t stereo[CHUNK * 2];
+  Clip clip;
+  for (;;) {
+    if (xQueueReceive(audioQueue, &clip, portMAX_DELAY) != pdTRUE) continue;
+    if (clip.rate != audioRate) {
+      i2s_set_sample_rates(AUDIO_PORT, clip.rate);
+      audioRate = clip.rate;
+    }
+    const int16_t *mono = (const int16_t *)clip.pcm;
+    const size_t samples = clip.bytes / 2;
+    for (size_t i = 0; i < samples; i += CHUNK) {
+      const size_t n = (samples - i < CHUNK) ? samples - i : CHUNK;
+      // The same sample to both channels, so it plays whichever channel the
+      // amp's SD pin happens to select: left, right, or their average.
+      for (size_t k = 0; k < n; k++) {
+        const int16_t v = (int16_t)((int32_t)mono[i + k] * clip.volume / 100);
+        stereo[2 * k] = v;
+        stereo[2 * k + 1] = v;
+      }
+      size_t written = 0;
+      i2s_write(AUDIO_PORT, stereo, n * 4, &written, portMAX_DELAY);
+    }
+    free(clip.pcm);
+    // No i2s_zero_dma_buffer here: it would discard the last buffer or two,
+    // clipping the end of the sentence. tx_desc_auto_clear already makes the
+    // DMA send silence once the data runs out.
+  }
+}
+
+// Find the format and the data in a RIFF WAV. Walks the chunks rather than
+// assuming the classic 44 byte header, because writers add chunks.
+static bool parseWav(const uint8_t *b, size_t n, uint32_t *rate,
+                     uint16_t *channels, uint16_t *bits,
+                     size_t *dataOffset, size_t *dataLen) {
+  if (n < 12 || memcmp(b, "RIFF", 4) != 0 || memcmp(b + 8, "WAVE", 4) != 0) {
+    return false;
+  }
+  bool haveFormat = false;
+  size_t p = 12;
+  while (p + 8 <= n) {
+    const uint32_t size = b[p + 4] | (b[p + 5] << 8) | (b[p + 6] << 16) |
+                          ((uint32_t)b[p + 7] << 24);
+    if (memcmp(b + p, "fmt ", 4) == 0 && size >= 16 && p + 24 <= n) {
+      const uint16_t tag = b[p + 8] | (b[p + 9] << 8);
+      if (tag != 1) return false;                        // PCM only
+      *channels = b[p + 10] | (b[p + 11] << 8);
+      *rate = b[p + 12] | (b[p + 13] << 8) | (b[p + 14] << 16) |
+              ((uint32_t)b[p + 15] << 24);
+      *bits = b[p + 22] | (b[p + 23] << 8);
+      haveFormat = true;
+    } else if (memcmp(b + p, "data", 4) == 0) {
+      *dataOffset = p + 8;
+      // A streaming writer can leave the size as 0xFFFFFFFF; trust the body.
+      *dataLen = (size > n - *dataOffset) ? n - *dataOffset : size;
+      return haveFormat;
+    }
+    p += 8 + size + (size & 1);                          // chunks pad to even
+  }
+  return false;
+}
+
+static uint8_t volumeFrom(httpd_req_t *req) {
+  char query[32];
+  char value[8];
+  if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+      httpd_query_key_value(query, "vol", value, sizeof(value)) == ESP_OK) {
+    const int v = atoi(value);
+    return (uint8_t)(v < 0 ? 0 : (v > 100 ? 100 : v));
+  }
+  return AUDIO_DEFAULT_VOLUME;
+}
+
+// POST /say?vol=70 with a 16 bit mono PCM WAV body. Answers 202 as soon as the
+// clip is queued, not when it has been played: this server also answers
+// /capture, and a handler that waited out a four second sentence would stall
+// every photograph behind it.
+static esp_err_t say_handler(httpd_req_t *req) {
+  if (!audioOk) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                        "audio did not initialise");
+    return ESP_FAIL;
+  }
+  const size_t len = req->content_len;
+  if (len < 44 || len > AUDIO_MAX_BYTES) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                        "body must be a WAV, under 1 MB");
+    return ESP_FAIL;
+  }
+  uint8_t *buf = (uint8_t *)ps_malloc(len);
+  if (!buf) {
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+    return ESP_FAIL;
+  }
+  size_t got = 0;
+  while (got < len) {
+    const int r = httpd_req_recv(req, (char *)buf + got, len - got);
+    if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+    if (r <= 0) {
+      free(buf);
+      return ESP_FAIL;
+    }
+    got += r;
+  }
+
+  uint32_t rate = 0;
+  uint16_t channels = 0, bits = 0;
+  size_t offset = 0, dataLen = 0;
+  if (!parseWav(buf, len, &rate, &channels, &bits, &offset, &dataLen) ||
+      channels != 1 || bits != 16 || rate < 8000 || rate > 48000) {
+    free(buf);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                        "expected a 16 bit mono PCM WAV, 8 to 48 kHz");
+    return ESP_FAIL;
+  }
+  // Slide the samples to the front of the buffer, so they are 2 byte aligned
+  // however the chunks before them were laid out.
+  memmove(buf, buf + offset, dataLen);
+
+  Clip clip = {buf, dataLen, rate, volumeFrom(req)};
+  Clip overtaken;
+  if (xQueueReceive(audioQueue, &overtaken, 0) == pdTRUE) {
+    free(overtaken.pcm);           // never started; the new one supersedes it
+  }
+  if (xQueueSend(audioQueue, &clip, 0) != pdTRUE) {
+    free(buf);
+    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "queue full");
+    return ESP_FAIL;
+  }
+  httpd_resp_set_status(req, "202 Accepted");
+  return httpd_resp_send(req, "queued", HTTPD_RESP_USE_STRLEN);
+}
+
+static bool startAudio() {
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  cfg.sample_rate = 16000;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+  cfg.dma_buf_count = 8;
+  cfg.dma_buf_len = 256;
+  cfg.use_apll = false;
+  cfg.tx_desc_auto_clear = true;   // silence on underrun, not a stuck buffer
+  if (i2s_driver_install(AUDIO_PORT, &cfg, 0, NULL) != ESP_OK) return false;
+
+  i2s_pin_config_t pins = {};
+  // Set MCLK explicitly to "none". Zero-initialising the struct leaves it at 0,
+  // which means GPIO0, and on the ESP32 the master clock can only come out of
+  // GPIO 0, 1 or 3: i2s_set_pin would hand GPIO0 to MCLK and silently take it
+  // away from LRC.
+  pins.mck_io_num = I2S_PIN_NO_CHANGE;
+  pins.bck_io_num = I2S_BCLK_PIN;
+  pins.ws_io_num = I2S_LRC_PIN;
+  pins.data_out_num = I2S_DOUT_PIN;
+  pins.data_in_num = I2S_PIN_NO_CHANGE;
+  if (i2s_set_pin(AUDIO_PORT, &pins) != ESP_OK) return false;
+  i2s_zero_dma_buffer(AUDIO_PORT);
+  audioRate = 16000;
+
+  audioQueue = xQueueCreate(1, sizeof(Clip));
+  if (!audioQueue) return false;
+  // Core 1 alongside the Arduino loop, above it in priority. It spends almost
+  // all its time blocked on DMA, so the command bridge is not starved.
+  return xTaskCreatePinnedToCore(audioTask, "audio", 4096, NULL, 2, NULL, 1)
+         == pdPASS;
+}
+
+#endif  // AUDIO_ENABLED
+
 static void startHttp() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
@@ -278,6 +519,10 @@ static void startHttp() {
     httpd_register_uri_handler(cameraServer, &capture_uri);
     httpd_register_uri_handler(cameraServer, &control_uri);
     httpd_register_uri_handler(cameraServer, &status_uri);
+#if AUDIO_ENABLED
+    httpd_uri_t say_uri = {"/say", HTTP_POST, say_handler, NULL};
+    httpd_register_uri_handler(cameraServer, &say_uri);
+#endif
   }
 
   // The stream gets its own server so a client sitting on it forever cannot
@@ -356,13 +601,21 @@ static bool startCamera() {
 void setup() {
   Serial.begin(DEBUG_BAUD);                              // USB, debug only
   Serial2.begin(UNO_BAUD, SERIAL_8N1, UNO_RX, UNO_TX);   // the UNO
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH);
+  if (LED_PIN >= 0) {
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, HIGH);
+  }
 
   DBG("\n\nelegoo_cam_station\n");
   cameraOk = startCamera();
   lastCameraTry = millis();
   cameraTries = 1;
+
+#if AUDIO_ENABLED
+  // After the camera, so the camera has I2S0 before anything asks for a port.
+  audioOk = startAudio();
+  DBG(audioOk ? "audio ok on I2S1\n" : "audio init failed\n");
+#endif
 
   // Both modes at once. Station for the home network, access point so a failed
   // join cannot strand the car somewhere unreachable.
@@ -378,7 +631,7 @@ void setup() {
   }
   if (WiFi.status() == WL_CONNECTED) {
     DBG("joined %s as %s\n", STA_SSID, WiFi.localIP().toString().c_str());
-    digitalWrite(LED_PIN, LOW);
+    if (LED_PIN >= 0) digitalWrite(LED_PIN, LOW);
   } else {
     DBG("could not join %s, access point still up at %s\n", STA_SSID,
         WiFi.softAPIP().toString().c_str());
