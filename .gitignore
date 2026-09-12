@@ -48,7 +48,20 @@ firmware/camera_pin_probe/
 # Superseded background research. CLAUDE.md wins where the two disagree.
 feasibility-report.html
 
-# Anthropic usage exports. The billing history of whoever ran this, and
-# nothing a reader of the repository needs. tokens.py --reconcile takes a
-# path, so keep your own under docs/.
-docs/*.csv
+# Anthropic usage exports, and anything else dropped here to work from. The
+# billing history of whoever ran this, and nothing a reader of the repository
+# needs. tokens.py --reconcile takes a path, so keep your own under docs/.
+docs/
+
+# Credentials. The API key belongs in the environment, not in the tree, but a
+# .env is the obvious place someone puts it and git will not warn you.
+.env
+.env.*
+*.pem
+*.key
+
+# Editor and tool state, which is about the machine rather than the project.
+.claude/
+.vscode/
+.idea/
+*.log
