@@ -802,15 +802,13 @@ calibration run the same day. What is left, in the order it blocks things:
 9. **Battery voltage over the wire.** A3 has the divider but no stock command
    exposes the reading. Adding one is a small UNO firmware change and is worth
    doing early.
-10. **What a REAL edge reads, on all three channels.** Every no-floor figure
-   in this file is the car held in the air, which is the easy case: empty
-   space returns nothing at all. A staircase has a tread 20 cm below and a
-   table has a floor further down, both of which return some signal. The cliff
-   threshold, and any future multi-channel rule, is calibrated against a case
-   that may be more generous than reality. Hold the car with its front
-   overhanging the actual staircase and run `floor_test.py`. **This is the
-   highest-value unanswered question on the list**, because it is the only one
-   whose failure mode is the car on the floor below.
+10. **Whether the stair edge still reads 1014 from other angles.** Answered
+   for one approach on 2026-09-11: a real stair reads almost exactly like thin
+   air, so held-in-the-air is a fair proxy. What is not known is whether that
+   survives an edge met at a sharp angle, where only part of the array clears
+   it. **This is the highest-value unanswered question on the list**, because
+   the proposed channel-2-AND-channel-1 rule rests on it and its failure mode
+   is the car on the floor below. See phase 09.
 11. **Why prompt cache reads stopped at turn 9 of every run.** The head read
    held at exactly 3,875 tokens and then went to zero, at 12 to 13 accumulated
    frames and about 49 seconds, which rules out the five-minute TTL. Both known
@@ -1305,9 +1303,54 @@ Phases 00 to 06 are done. What is left, roughly in order of value:
   792 B/s, **82% of the 960 B/s link**, against the 55% the current poll uses.
   6 Hz brings it back to 62%.
 
-  **So the next measurement is the real staircase**, with the car held by hand
-  and its front overhanging, not driven there. Until that exists, keep the car
-  off the dark rug rather than widening the rule that protects it.
+  **The real staircase was then measured, and it reads like thin air.**
+  2026-09-11, car held by hand with its front overhanging an actual stair:
+
+  | surface | ch0 | ch1 | ch2 (cliff) | |
+  | --- | --- | --- | --- | --- |
+  | Brown hardwood | 381 | 42 | 41 | floor |
+  | Rug, bright part | 641 | 45 | 230 | floor |
+  | Rug, plain part | 862 | 585 | 732 | floor |
+  | Rug, dark part | 990 | 473 | **953** | floor |
+  | **Real stair edge** | 1012 | **715** | **1014** | drop |
+  | Held in the air | 1016 | 732 | 1022 | drop |
+
+  So the worry that a real edge would return more signal than empty space was
+  wrong: a stair reads 1014 against air's 1022. **Held in the air is a fair
+  proxy after all**, which retires that concern and validates every no-floor
+  figure taken since 2026-09-06.
+
+  **Channel 2 alone is finished as a cliff detector.** Dark rug 953, stair
+  1014: 61 counts. A threshold could be squeezed in at 983, giving 30 counts
+  either way, which is not a margin on a sensor whose readings move with
+  battery, wear and approach angle.
+
+  **The AND rule now has evidence.** On the one surface that fools channel 2,
+  channel 1 separates cleanly:
+
+  | | ch1 |
+  | --- | --- |
+  | Rug, dark part (a floor) | 473 |
+  | Real stair edge (a drop) | 715 |
+  | Held in the air (a drop) | 732 |
+
+  A rule of **channel 2 above 900 AND channel 1 above 594** holds on every
+  surface measured, with 121 counts of margin each way. **Still not
+  implemented**, and the reasons have narrowed to two:
+
+  1. **One edge, one angle, one position.** An edge met at a sharp angle may
+     only reach part of the array. Measure the same stair from several
+     approaches, and a table edge too, before touching the safety layer.
+  2. **The plain rug reads 585 on channel 1**, only 9 below that line. It does
+     not matter today, because its channel 2 is 732 and the rule never
+     consults channel 1. It would matter the moment a surface is both dark
+     enough to fool channel 2 and plain enough to read near 585.
+
+  Serial budget is the other cost: distance plus two line channels at 8 Hz is
+  792 B/s, **82% of the link**, against 55% now. 6 Hz brings it to 62%.
+
+  Meanwhile, keep the car off the dark rug rather than widening the rule that
+  protects it.
 - **10 Battery over the wire.** A3 has the divider and no stock command exposes
   it. Five lines of UNO firmware, `analogRead(A3) * 0.0375 * 1.08`. Worth
   bundling with widening the servo tilt clamp, since both need the same flash.
