@@ -4,6 +4,7 @@ tokens.py - what the runs cost, and whether that agrees with the bill.
 
     python tokens.py                        # every run, newest last
     python tokens.py --by-day               # totals per UTC day and model
+    python tokens.py --last                 # the run you just did
     python tokens.py --run 20260908-215355  # one run, turn by turn
     python tokens.py --reconcile docs/claude_api_tokens_*.csv
 
@@ -421,7 +422,12 @@ def main() -> int:
     ap.add_argument("--by-day", action="store_true",
                     help="totals per UTC day and model, the way the bill is "
                          "grouped")
-    ap.add_argument("--run", help="one run, turn by turn")
+    ap.add_argument("--run", help="one run, turn by turn. The timestamped "
+                                  "directory name agent.py prints when it "
+                                  "starts, e.g. 20260912-094512")
+    ap.add_argument("--last", action="store_true",
+                    help="the most recent run, turn by turn. What you want "
+                         "straight after a run rather than copying its name")
     ap.add_argument("--reconcile", metavar="CSV",
                     help="compare the logs against Anthropic's usage export. "
                          "Console, Usage, export CSV")
@@ -439,12 +445,19 @@ def main() -> int:
         print(f"no runs with usage in {args.runs}", file=sys.stderr)
         return 1
 
+    if args.last:
+        # Newest by name, which sorts correctly because the stamp is
+        # year-month-day-hour-minute-second.
+        show_turns(sorted(runs, key=lambda r: r.name)[-1])
+        return 0
     if args.run:
         for run in runs:
             if run.name == args.run:
                 show_turns(run)
                 return 0
-        print(f"no run named {args.run}", file=sys.stderr)
+        print(f"no run named {args.run}. Runs are named for when they "
+              f"started; the newest is {sorted(r.name for r in runs)[-1]}, "
+              f"and --last picks it for you.", file=sys.stderr)
         return 1
     if args.reconcile:
         return reconcile(runs, args.reconcile, empty)
