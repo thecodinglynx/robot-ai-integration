@@ -52,7 +52,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from elegoo import (Car, CarConfig, CarError, Direction,
                     TILT_MIN, TILT_MAX, TILT_SCAN, TILT_DRIVING,
                     DRIVE_SPEED, TURN_SPEED, DRIVE_SPEED_MAX,
-                    TURN_DEG_PER_MS, DRIVE_MM_PER_MS)
+                    TURN_DEG_PER_MS, DRIVE_MM_PER_MS,
+                    CLIFF_CHANNEL, CLIFF_THRESHOLD)
 from safety import SafetyLoop, SafetyConfig
 from voice import Voice
 from ears import Ears, ListenUnavailable
@@ -516,6 +517,25 @@ class Pilot:
         head = ("head position not yet set" if pan is None and tilt is None
                 else f"head at pan {pan}, tilt {tilt}")
         return f"range {distance}, {head}{edge}"
+
+    def raw_sensors(self) -> Dict[str, Any]:
+        """The numbers behind sensors(), for the log rather than the model.
+
+        The model gets prose because a raw count means nothing to it. The log
+        needs the count, because a verdict without its number cannot be argued
+        with afterwards: a cliff stop on a patterned rug and a cliff stop at a
+        real staircase both arrive as "no floor under the front sensors", and
+        only the reading against CLIFF_THRESHOLD tells them apart. Found on
+        2026-09-11 when a run stopped a turn dead with 122 cm of clear air in
+        front of it and nothing recorded how close to 900 the rug had been.
+        """
+        r = self.guard.reading
+        if r is None:
+            return {}
+        return {"range_raw": r.distance_raw,
+                "cliff_raw": r.line[CLIFF_CHANNEL],
+                "cliff_threshold": CLIFF_THRESHOLD,
+                "over_edge": r.over_edge}
 
     def frame(self) -> Optional[bytes]:
         try:
@@ -1123,6 +1143,7 @@ def main() -> int:
                         "result": outcome.text, "frame": frame_name,
                         "is_error": outcome.is_error,
                         "sensors": pilot.sensors(),
+                        "raw": pilot.raw_sensors(),
                         "latency_s": round(latency, 2),
                         # Usage belongs to the TURN, not to the tool call. The
                         # model can ask for several tools in one response, and

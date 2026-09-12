@@ -1198,10 +1198,29 @@ Phases 00 to 06 are done. What is left, roughly in order of value:
   cost of Opus. Opus remains a `--model` away for anything needing finer
   judgement. `run.json` records the model and the exact prompt, so a comparison
   is traceable rather than an impression.
-- **09 Dark floors.** The last untested part of phase 04. Channel 2 reads 170
-  on hardwood against a threshold of 900 and 1017 over an edge, which is
-  generous, but a dark rug reads higher. Check every surface the car will meet
-  before trusting the cliff stop on it.
+- **09 Dark floors. NOW OBSERVED, not just predicted.** On 2026-09-11 an
+  exploration run had a turn stopped dead by "no floor under the front
+  sensors" with **122 cm of clear air in front of it**, on a patterned rug.
+  The range finder was not involved: this was the cliff stop firing on a
+  surface, which is exactly the false positive this item was opened for.
+
+  It read as the robot being timid about obstacles and it was nothing of the
+  kind. Worth remembering when judging behaviour: the model backed away
+  sensibly from what it was told, and what it was told was wrong.
+
+  **Nothing recorded how close to 900 the rug was**, because only the verdict
+  was logged and not the reading. Fixed: `turns.jsonl` now carries a `raw`
+  block with `cliff_raw`, `range_raw` and the threshold alongside the prose the
+  model sees. A verdict without its number cannot be argued with afterwards,
+  which is the same lesson the cache writes taught in phase 07.
+
+  `floor_test.py` reads all three channels over each real surface and says
+  whether the threshold survives. Run it on that rug before trusting the cliff
+  stop anywhere near the staircase the same run photographed.
+
+  **The answer is probably not "raise the threshold."** Margin at the top is
+  only about 120 counts, and the two failures are not symmetric: a false stop
+  on a rug is an annoyance, a missed edge puts the car down the stairs.
 - **10 Battery over the wire.** A3 has the divider and no stock command exposes
   it. Five lines of UNO firmware, `analogRead(A3) * 0.0375 * 1.08`. Worth
   bundling with widening the servo tilt clamp, since both need the same flash.
@@ -1466,6 +1485,11 @@ The findings from all of them are in this file, which is the point.
   reconciliation is the point: it has already found a caching fault, a double
   count and three unlogged runs, none of which the logs could report on their
   own. Export the CSV from the console under Usage; it is git-ignored.
+- `floor_test.py` - reads all three line sensors over each floor the car will
+  actually meet, and checks `CLIFF_THRESHOLD` against them. Reports the worst
+  single sample rather than the median, because the cliff stop fires on one
+  poll. Written after a patterned rug stopped a turn with 122 cm of clear air
+  ahead.
 - `demo_look_around.py` - the robot looks around, drives a little and retraces
   its way back. Exercises every subsystem in one run.
 - `feasibility-report.html` - background research and reasoning.
