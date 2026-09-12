@@ -127,6 +127,11 @@ CALIBRATE_S = 1.0                 # ambient noise, measured at startup
 MIN_VOICED_S = 0.18
 THRESHOLD_OVER_AMBIENT = 4.0      # how far above the room counts as speech
 THRESHOLD_FLOOR = 0.004           # a silent room must not arm on nothing
+# And a ceiling, because the calibration is one second long and cannot be
+# trusted with the whole decision. Ordinary speech a metre from a laptop
+# microphone sits around 0.05 to 0.2, so a threshold above this would be deaf
+# whatever the room was doing during that second.
+THRESHOLD_CEILING = 0.045
 
 
 class ListenUnavailable(RuntimeError):
@@ -356,6 +361,66 @@ class Ears:
         self._note(self.prompt)
         return self
 
+    def _calibrate(self, stream) -> float:
+        """Work out what counts as speech in this room.
+
+        The MEDIAN block, not the loudest. The first version took the loudest,
+        and one keystroke, chair creak or cough during that second set the
+        floor for the whole run: multiplied by four, nothing said afterwards
+        could beat it, and the robot sat there hearing nothing with no
+        indication why. A median ignores a handful of noisy blocks by
+        construction, which is the entire reason to prefer it.
+        """
+        np = self._np
+        levels = []
+        samples = 0
+        while self._running.is_set() and samples < CALIBRATE_S * SAMPLE_RATE:
+            block, _ = stream.read(BLOCK)
+            levels.append(float(np.sqrt(np.mean(block ** 2))))
+            samples += BLOCK
+        floor = float(np.median(levels)) if levels else 0.0
+        threshold = min(THRESHOLD_CEILING,
+                        max(THRESHOLD_FLOOR, floor * THRESHOLD_OVER_AMBIENT))
+        self._note(f"  (room {floor:.4f}, speech above {threshold:.4f}; "
+                   f"`python ears.py --meter` if it mishears)")
+        return threshold
+
+    def meter(self, seconds: float = 30.0) -> None:
+        """Show what the microphone hears, against the threshold it chose.
+
+        For when nothing happens and it is not obvious whether the microphone
+        is dead, aimed at the wrong device, or simply quieter than the gate.
+        """
+        np = self._np
+        stream = self._sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
+                                      dtype="float32", blocksize=BLOCK,
+                                      device=self.mic)
+        stream.start()
+        self._running.set()
+        with stream:
+            threshold = self._calibrate(stream)
+            print("speak normally. A bar past the mark is heard as speech.\n")
+            end = time.time() + seconds
+            peak = 0.0
+            while time.time() < end:
+                loudest = 0.0
+                for _ in range(10):                    # ~0.3 s a line
+                    block, _ = stream.read(BLOCK)
+                    loudest = max(loudest,
+                                  float(np.sqrt(np.mean(block ** 2))))
+                peak = max(peak, loudest)
+                scale = 60 / THRESHOLD_CEILING / 2
+                bar = "#" * min(70, int(loudest * scale))
+                mark = int(threshold * scale)
+                line = list(f"{bar:<70}")
+                if mark < 70:
+                    line[mark] = "|" if loudest * scale < mark else "+"
+                print(f"  {loudest:.4f} {''.join(line)}", end="\r")
+            print(f"\n\nloudest {peak:.4f}, threshold {threshold:.4f}: "
+                  + ("speech gets through" if peak > threshold else
+                     "NOTHING got past the threshold. Wrong microphone, or "
+                     "too far from it"))
+
     def _listen(self) -> None:
         """Always-on: segment speech out of the room and transcribe it."""
         np = self._np
@@ -369,18 +434,7 @@ class Ears:
             return
 
         with stream:
-            # Measure the room before deciding what counts as speech. A fixed
-            # threshold works in one room and not the next; a fan, a fridge or
-            # a laptop fan moves the floor by more than a voice does.
-            floor = 0.0
-            samples = 0
-            while self._running.is_set() and samples < CALIBRATE_S * SAMPLE_RATE:
-                block, _ = stream.read(BLOCK)
-                floor = max(floor, float(np.sqrt(np.mean(block ** 2))))
-                samples += BLOCK
-            threshold = max(THRESHOLD_FLOOR, floor * THRESHOLD_OVER_AMBIENT)
-            self._note(f"  (room noise {floor:.4f}, speaking above "
-                       f"{threshold:.4f})")
+            threshold = self._calibrate(stream)
 
             segmenter = Segmenter(threshold)
             talking = False
@@ -589,6 +643,13 @@ if __name__ == "__main__":
     except ListenUnavailable as exc:
         print(exc)
         raise SystemExit(1)
+
+    if "--meter" in sys.argv:
+        try:
+            ears.meter()
+        except KeyboardInterrupt:
+            print()
+        raise SystemExit(0)
 
     with ears:
         print("Say something. Ctrl+C to quit.")
