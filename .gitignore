@@ -47,3 +47,8 @@ firmware/camera_pin_probe/
 
 # Superseded background research. CLAUDE.md wins where the two disagree.
 feasibility-report.html
+
+# Anthropic usage exports. The billing history of whoever ran this, and
+# nothing a reader of the repository needs. tokens.py --reconcile takes a
+# path, so keep your own under docs/.
+docs/*.csv

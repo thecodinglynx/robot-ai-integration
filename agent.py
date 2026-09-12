@@ -430,7 +430,15 @@ class RunLog:
             # only comparable with another if you can see what each was told.
             json.dump({"task": task, "model": model, "persona": persona,
                        "system": system, "tools": tool_definitions(),
-                       "started": stamp}, f, indent=2)
+                       "started": stamp,
+                       # UTC as well, because Anthropic's billing is in UTC
+                       # and `stamp` is local. An evening run here lands on
+                       # the next day on their side, and reconciling the two
+                       # by directory name silently attributes a day's spend
+                       # to the wrong day. See tokens.py.
+                       "started_utc": time.strftime(
+                           "%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                      f, indent=2)
         print(f"logging to {self.dir}")
 
     def frame(self, turn: int, jpeg: bytes, tag: str = "") -> str:
@@ -1052,9 +1060,22 @@ def main() -> int:
 
                 calls = [b for b in response.content if b.type == "tool_use"]
                 if not calls:
+                    # Usage here too. Without it a turn that answered in
+                    # words rather than with a tool call was billed and not
+                    # recorded, and the run's total quietly understated itself.
                     log.turn({"turn": turn, "said": said, "tool": None,
                               "stop_reason": response.stop_reason,
-                              "latency_s": round(latency, 2)})
+                              "latency_s": round(latency, 2),
+                              "usage": {
+                                  "input": response.usage.input_tokens,
+                                  "output": response.usage.output_tokens,
+                                  "cache_read": getattr(
+                                      response.usage,
+                                      "cache_read_input_tokens", 0),
+                                  "cache_write": getattr(
+                                      response.usage,
+                                      "cache_creation_input_tokens", 0),
+                              }})
                     if not listener:
                         print(f"[{turn}] no tool call, stopping "
                               f"({response.stop_reason})")
@@ -1074,7 +1095,7 @@ def main() -> int:
                                  "content": response.content})
 
                 results = []
-                for call in calls:
+                for index, call in enumerate(calls):
                     # The spoken line is a required parameter now, so there is
                     # always one, and it is the robot's voice rather than the
                     # model's aside to us.
@@ -1103,7 +1124,16 @@ def main() -> int:
                         "is_error": outcome.is_error,
                         "sensors": pilot.sensors(),
                         "latency_s": round(latency, 2),
-                        "usage": {
+                        # Usage belongs to the TURN, not to the tool call. The
+                        # model can ask for several tools in one response, and
+                        # writing the response's usage onto each of them counts
+                        # the same tokens twice. It did: 21,367 cache reads and
+                        # 906 output tokens across six turns, found on
+                        # 2026-09-11 by reconciling against Anthropic's own
+                        # export, which is the only reason it was ever visible.
+                        # So the first call carries the usage and the rest
+                        # point at it.
+                        "usage": ({
                             "input": response.usage.input_tokens,
                             "output": response.usage.output_tokens,
                             "cache_read": getattr(
@@ -1111,7 +1141,7 @@ def main() -> int:
                             "cache_write": getattr(
                                 response.usage,
                                 "cache_creation_input_tokens", 0),
-                        },
+                        } if index == 0 else {"same_as_turn": turn}),
                     })
 
                 # Anything the person said while that action ran, or while the

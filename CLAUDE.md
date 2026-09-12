@@ -1147,6 +1147,30 @@ Phases 00 to 06 are done. What is left, roughly in order of value:
 
   Earlier, and still true: frames default to QVGA, which cut image tokens on a
   twenty turn run by about 93%. `--framesize` tunes it.
+
+  **`tokens.py` is the accounting, and `--reconcile` is the part that matters.**
+  It prices the runs per turn, per run and per UTC day, and then checks that
+  total against Anthropic's own CSV export from the console. Against the
+  2026-08-14 to 2026-09-12 export, four of the five billed days now agree to
+  the token on every field the logs record. Getting there found two more
+  logging faults that no amount of reading the code had:
+
+  1. **Usage belongs to the turn, not the tool call.** The model can ask for
+     two tools in one response, and the loop wrote that response's usage onto
+     each record. 21,367 cache reads and 906 output tokens counted twice,
+     across six turns.
+  2. **Three runs logged nothing at all and were billed anyway.** A crash
+     between the first API call and the first turn record leaves a `run.json`
+     and no `turns.jsonl`. They are now named in the report rather than
+     skipped.
+
+  Both were found by the difference against the bill being non-zero, and
+  neither would have been found any other way. **The traps that make this
+  worth automating**: the export is UTC and the run directories are local, so
+  an evening run here lands on the next day's bill; a missing field is not a
+  zero and is printed as a floor with `>`; and the price table is the one
+  input that cannot be derived from the logs, so `--reconcile` is also what
+  catches it going stale.
 - [x] **08 Model comparison. Done 2026-09-08: Sonnet 5 at low effort is the
   default.** It scans first, computes its turns from the head's pan offset,
   corrects an overshoot and knows when it has arrived, at about a third of the
@@ -1415,6 +1439,12 @@ The findings from all of them are in this file, which is the point.
   The model gets a frame, the sensors and the last outcome; replies with
   one tool call; the host executes it through the safety layer and hands back
   what happened plus a fresh frame.
+- `tokens.py` - what the runs cost, and whether that agrees with the bill.
+  Prices `runs/*/turns.jsonl` per turn, per run and per UTC day, and
+  `--reconcile` checks the total against Anthropic's CSV export. The
+  reconciliation is the point: it has already found a caching fault, a double
+  count and three unlogged runs, none of which the logs could report on their
+  own. Export the CSV from the console under Usage; it is git-ignored.
 - `demo_look_around.py` - the robot looks around, drives a little and retraces
   its way back. Exercises every subsystem in one run.
 - `feasibility-report.html` - background research and reasoning.

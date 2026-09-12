@@ -93,6 +93,32 @@ JSON line per turn including token usage, and every frame the model was shown.
 Those directories are git-ignored: they are a photographic record of whatever
 room the car was in.
 
+## What it costs
+
+```bash
+python tokens.py                  # every run, with its cache hit rate
+python tokens.py --by-day         # grouped the way the bill is
+python tokens.py --run 20260908-215355
+```
+
+**Then check that against the bill, because a number nothing checks drifts.**
+Export the usage CSV from the Anthropic console and:
+
+```bash
+python tokens.py --reconcile docs/claude_api_tokens_2026_08_14_to_2026_09_12.csv
+```
+
+It prints billed against logged, per UTC day and model, and the difference. A
+caching fault once ran for three days and cost about four times what it should
+have while the logs looked healthy, because they recorded cache reads and not
+cache writes, and writes are most of the bill. Reconciling is what makes that
+visible; it has since found a double count and three runs that were billed and
+logged nothing.
+
+The number to watch in an ordinary run is the cache hit rate printed at the
+end. It should stay high for the whole run. If it collapses partway through,
+something is changing the prompt prefix between turns.
+
 ## Layout
 
 **The robot**
@@ -105,6 +131,8 @@ room the car was in.
   veto power over every action, shortens a move to the clear space in front of
   it, and stops the car itself. No intelligence, no network.
 - `agent.py` — the model loop, with logging built in.
+- `tokens.py` — what the runs cost, and `--reconcile` to check that against
+  Anthropic's own export rather than against itself.
 
 **Firmware**
 
