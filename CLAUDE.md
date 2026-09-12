@@ -1221,6 +1221,41 @@ Phases 00 to 06 are done. What is left, roughly in order of value:
   **The answer is probably not "raise the threshold."** Margin at the top is
   only about 120 counts, and the two failures are not symmetric: a false stop
   on a rug is an annoyance, a missed edge puts the car down the stairs.
+
+  **Measured with `floor_test.py` on 2026-09-11, and the rug is INNOCENT at
+  rest.** Twelve samples per channel per surface:
+
+  | surface | ch0 | ch1 | ch2 (cliff) |
+  | --- | --- | --- | --- |
+  | Patterned rug, one spot | 862 | 585 | **732** |
+  | Brown hardwood | 381 | 42 | 41 |
+  | Held in the air | 1017 | 733 | 1021 |
+
+  Spread within each surface was 2 counts or less, so these are solid
+  readings, and the air figures match the 2026-09-06 measurements to within a
+  count. **Channel 2 on that rug reads 732, which is 168 below the threshold**,
+  and the static survey passes.
+
+  **So the static reading does not explain the stop, and the dark-floor
+  hypothesis is NOT confirmed.** Something made the reading climb 168 counts,
+  58% of the entire rug-to-air span, during a turn. Two candidates, and the
+  cheap one first:
+
+  1. **The rug is patterned and only one spot was measured.** A darker part of
+     the pattern could sit far higher. Measure several spots before anything
+     else; it needs no motors.
+  2. **The reading while turning is not the reading at rest.** A tank turn
+     drives one side and holds the other, so the car pitches and rolls, and a
+     sensor lifted off a deep pile reads higher. This is the harder one to
+     measure and the more likely one to be true.
+
+  The next trip will answer it regardless, because `cliff_raw` is logged now.
+
+  **What the survey did settle**: channels 0 and 1 are unusable as cliff
+  detectors on this rug, with only 155 and 148 counts between rug and no floor
+  against channel 2's 289. Using more than one channel to make a false stop
+  harder is therefore not available as a fix, which is worth knowing before
+  reaching for it.
 - **10 Battery over the wire.** A3 has the divider and no stock command exposes
   it. Five lines of UNO firmware, `analogRead(A3) * 0.0375 * 1.08`. Worth
   bundling with widening the servo tilt clamp, since both need the same flash.
