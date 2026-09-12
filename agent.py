@@ -56,6 +56,7 @@ from elegoo import (Car, CarConfig, CarError, Direction,
                     CLIFF_CHANNEL, CLIFF_THRESHOLD)
 from safety import SafetyLoop, SafetyConfig
 from voice import Voice
+from idle import IdleHead
 from ears import Ears, ListenUnavailable
 import personas
 
@@ -252,6 +253,16 @@ Every action returns a fresh frame, so you do not need to call `look` after
 moving just to see where you are. Use `look` and `scan` to aim somewhere new,
 not to refresh the picture.
 
+**Do not call `stop` after a move.** Moves are time limited and the wheels have
+already stopped by the time you are asked again. A run that alternates move and
+stop spends half its turns standing still. `stop` is for breaking off something
+going wrong, and most runs never need it once.
+
+**If the floor keeps reporting no floor in the same spot, it is a dark patch,
+not a cliff.** The sensor reads dark surfaces as empty space. Backing up and
+retrying the same turn will fail the same way. Go somewhere else and approach
+from a different side rather than working at it.
+
 **Panning the head is not searching.** A previous run spent eight of its ten
 turns panning the head one position at a time. `scan` covers the whole range in
 a single turn and puts the head back at centre. Use it, then act on what it
@@ -382,7 +393,13 @@ def tool_definitions() -> List[Dict[str, Any]]:
         },
         {
             "name": "stop",
-            "description": "Stop the wheels immediately.",
+            "description": (
+                "Stop the wheels immediately. You almost never need this. "
+                "Every drive and turn is already time limited and the wheels "
+                "have stopped before you are asked again, so calling stop "
+                "after a move does nothing except spend the turn you could "
+                "have moved with. Use it only to break off something that is "
+                "going wrong."),
             "input_schema": {"type": "object", "properties": {},
                              "additionalProperties": False},
         },
@@ -840,6 +857,11 @@ def main() -> int:
     ap.add_argument("--stt-model", default="base.en",
                     help="speech to text model, default %(default)s. tiny.en "
                          "is quicker, small.en more accurate")
+    ap.add_argument("--no-idle-head", action="store_true",
+                    help="keep the head still while the model thinks. By "
+                         "default it glances around a little, which costs no "
+                         "turns and no tokens and stops the robot looking "
+                         "broken during the two to four seconds it is deciding")
     ap.add_argument("--no-voice", action="store_true",
                     help="do not speak the narration aloud")
     ap.add_argument("--persona", default=personas.DEFAULT_PERSONA,
@@ -1035,33 +1057,34 @@ def main() -> int:
                 turn += 1
                 turns_on_this += 1
                 started = time.time()
-                response = client.messages.create(
-                    model=args.model,
-                    max_tokens=8000,
-                    # TWO breakpoints, and the first one is the important
-                    # one. Caching is a prefix match, so the system prompt and
-                    # tools, which never change, can always be reused. They
-                    # need a breakpoint of their own to say so.
-                    #
-                    # Without it, the only breakpoint was the automatic one at
-                    # the end of the messages. That covered the whole prompt,
-                    # matched nothing once the history changed, and left the
-                    # stable head alive only as long as the entry written on
-                    # turn 1: five minutes, about ten turns. Every turn after
-                    # that wrote the entire prompt at 1.25x and read none of
-                    # it back, which is the most expensive way to call this
-                    # API. It cost roughly four times what the same runs
-                    # should have, and nothing in the log said so.
-                    system=[{"type": "text", "text": system_prompt,
-                             "cache_control": {"type": "ephemeral"}}],
-                    tools=tools,
-                    # And the tail, which hits whenever the history has only
-                    # been appended to since the last turn.
-                    cache_control={"type": "ephemeral"},
-                    thinking={"type": "adaptive"},
-                    output_config={"effort": args.effort},
-                    messages=messages,
-                )
+                with IdleHead(car, enabled=not args.no_idle_head):
+                    response = client.messages.create(
+                        model=args.model,
+                        max_tokens=8000,
+                        # TWO breakpoints, and the first one is the important
+                        # one. Caching is a prefix match, so the system prompt and
+                        # tools, which never change, can always be reused. They
+                        # need a breakpoint of their own to say so.
+                        #
+                        # Without it, the only breakpoint was the automatic one at
+                        # the end of the messages. That covered the whole prompt,
+                        # matched nothing once the history changed, and left the
+                        # stable head alive only as long as the entry written on
+                        # turn 1: five minutes, about ten turns. Every turn after
+                        # that wrote the entire prompt at 1.25x and read none of
+                        # it back, which is the most expensive way to call this
+                        # API. It cost roughly four times what the same runs
+                        # should have, and nothing in the log said so.
+                        system=[{"type": "text", "text": system_prompt,
+                                 "cache_control": {"type": "ephemeral"}}],
+                        tools=tools,
+                        # And the tail, which hits whenever the history has only
+                        # been appended to since the last turn.
+                        cache_control={"type": "ephemeral"},
+                        thinking={"type": "adaptive"},
+                        output_config={"effort": args.effort},
+                        messages=messages,
+                    )
                 latency = time.time() - started
                 totals["input"] += response.usage.input_tokens
                 totals["output"] += response.usage.output_tokens

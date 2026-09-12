@@ -744,6 +744,63 @@ Three decisions worth keeping:
   refused, and an instruction arriving after a report. The API rejects
   malformed histories, so that is the part worth proving without hardware.
 
+### Where a long run's turns actually went
+
+An 80 turn tour on 2026-09-11, `runs/20260911-224310`. It ran the full budget
+and the car barely moved. The breakdown is worth keeping, because only one of
+the three causes was the model's doing and none of them was obvious from
+watching:
+
+| tool | turns | |
+| --- | --- | --- |
+| turn | 32 | of which 8 were refused or cut short by the cliff stop |
+| **stop** | **26** | **all of them useless** |
+| drive | 16 | mostly 300 ms reverses away from the cliff stop |
+| scan | 3 | |
+| look | 3 | |
+
+1. **A third of the run was `stop`, and the task prompt caused it.** The task
+   said "move somewhere you have not described yet, **stop**, and say one
+   concrete thing". `stop` is a tool name. The model dutifully called it after
+   every move. **Do not use a tool's name as an ordinary English verb in a
+   task.** The tool description now says stop is almost never needed, and the
+   system prompt says so too, since a bounded move has already finished by the
+   time the model is asked again.
+2. **Eight cliff trips on the dark rug**, plus a reverse to recover from each,
+   so about sixteen turns spent being pushed around by a false positive. The
+   prompt now tells the model that a repeated no-floor in one spot is a dark
+   patch rather than a cliff, and to go elsewhere instead of retrying.
+3. **Turn and stop oscillation from turn 59 to 72**, left, right, left, right,
+   getting nowhere. Partly (1) and (2) compounding.
+
+**The rug is confirmed as the cause, and it is not a dynamic effect.** The new
+`raw` block in `turns.jsonl` caught `cliff_raw` on every trip: 915, 918, 930,
+939, 974, 991, 992. The static dark patch measured 953. Readings while moving
+sit in the same band as readings at rest, so the earlier "maybe a tank turn
+lifts the sensor" hypothesis is not needed. That question is closed.
+
+### The head moves while the model thinks
+
+`idle.py`, added 2026-09-11. A model turn takes two to four seconds and the
+robot used to sit frozen through all of it, which reads as broken rather than
+as thinking. `IdleHead` wraps the API call and glances the head a few degrees
+and back.
+
+**It cannot change what the model sees, by construction.** The pan angle is how
+the model works out which way the car is facing, so a wandering head would
+corrupt its aiming and the symptom would look like a bad model rather than like
+a feature interfering. So: it runs only inside the thinking window, when
+nothing is being observed or acted on; it restores the exact commanded aim from
+`Car.aim` and waits for the servo to arrive before returning, so the next
+capture is never mid-sweep; and every error is swallowed, because a cosmetic
+flourish must not be able to end a run.
+
+**Why not just ask the model to `look` more often**: that costs a turn and
+about 100 image tokens each time, and the turn is one it did not spend driving,
+which is the problem this run had in the first place. This costs neither.
+
+`--no-idle-head` turns it off.
+
 ### A speaker on the robot: shelved in favour of Bluetooth
 
 A MAX98357A I2S amplifier wired to the camera module was designed, written and
@@ -1620,6 +1677,9 @@ The findings from all of them are in this file, which is the point.
   single sample rather than the median, because the cliff stop fires on one
   poll. Written after a patterned rug stopped a turn with 122 cm of clear air
   ahead.
+- `idle.py` - moves the head while the model is thinking, then puts it back
+  exactly where it was commanded. Cosmetic only, costs no turns and no tokens,
+  and bounded so it can never change the pan angle the model reasons from.
 - `demo_look_around.py` - the robot looks around, drives a little and retraces
   its way back. Exercises every subsystem in one run.
 - `feasibility-report.html` - background research and reasoning.
