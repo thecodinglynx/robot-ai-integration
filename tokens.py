@@ -7,6 +7,7 @@ tokens.py - what the runs cost, and whether that agrees with the bill.
     python tokens.py --last                 # the run you just did
     python tokens.py --run 20260908-215355  # one run, turn by turn
     python tokens.py --reconcile docs/claude_api_tokens_*.csv
+    python tokens.py --reconcile docs/claude_api_cost_*.csv
 
 WHY THIS EXISTS
 
@@ -26,6 +27,20 @@ So this tool does two separate jobs, and the second is the one that matters:
    was not logged, or the price table is stale. All three have happened.
 
 Export the CSV from the Anthropic console, Usage, and save it under docs/.
+**There are two exports and they check different things**, so take both.
+`--reconcile` tells them apart by their header:
+
+- The **token** export is counts. It checks the LOGS: anything the runs failed
+  to record shows up as a gap.
+- The **cost** export is dollars, split by token type. It checks `PRICES`,
+  which is the one input here that the logs cannot contradict, because it is
+  typed in from a pricing page. Billed dollars against billed tokens pins every
+  rate exactly. Both models and all four rates were confirmed to the cent on
+  2026-09-12.
+
+The cost export also shows the caching health in money, which is the form that
+is hard to argue with: on 2026-09-09 it was $1.78 written against $0.07 read,
+and on 2026-09-12, after the fix, $0.12 written against $0.30 read.
 
 THREE TRAPS, ALL OF WHICH HAVE ALREADY CAUGHT US
 
@@ -353,6 +368,132 @@ def read_csv(path: str) -> Dict[Tuple[str, str], Usage]:
     return out
 
 
+# The cost export writes display names. Map them onto the model ids the runs
+# are logged under.
+def normalise_model(name: str) -> str:
+    return name.strip().lower().replace(" ", "-").replace(".", "-")
+
+
+# Its token_type column onto the fields of Usage.
+COST_FIELDS = {
+    "input_no_cache": "inp",
+    "output": "out",
+    "input_cache_read": "read",
+    "input_cache_write_5m": "write_5m",
+    "input_cache_write_1h": "write_1h",
+}
+
+
+def is_cost_export(path: str) -> bool:
+    with io.open(path, encoding="utf-8-sig", newline="") as f:
+        header = csv.DictReader(f).fieldnames or []
+    return "cost_usd" in header
+
+
+def read_cost_csv(path: str) -> Dict[Tuple[str, str], Dict[str, float]]:
+    """The console's COST export: dollars, split by token type.
+
+    This is a different and better check than the token export. The token
+    counts can be verified against the logs, but PRICES cannot: it is typed in
+    from a pricing page and is the one input here that nothing else can
+    contradict. Billed dollars against billed tokens pins it exactly.
+    """
+    out: Dict[Tuple[str, str], Dict[str, float]] = defaultdict(
+        lambda: defaultdict(float))
+    with io.open(path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            field = COST_FIELDS.get((row.get("token_type") or "").strip())
+            if field is None:
+                continue            # a type we do not price, e.g. web search
+            key = (row["usage_date_utc"].strip(),
+                   normalise_model(row["model"]))
+            value = (row.get("cost_usd") or "0").replace(",", "").strip()
+            out[key][field] += float(value or 0)
+    return out
+
+
+def reconcile_cost(runs: List[Run], csv_path: str) -> int:
+    """What the logs say each category cost, against what was billed for it.
+
+    A disagreement here is one of two things and the report cannot tell them
+    apart on its own: the token counts are wrong, or PRICES is stale. Run the
+    token export through --reconcile as well; if the counts agree there and the
+    dollars disagree here, it is the price table.
+    """
+    billed = read_cost_csv(csv_path)
+    logged: Dict[Tuple[str, str], Usage] = defaultdict(Usage)
+    for run in runs:
+        logged[(run.utc_date, run.model)].add(run.usage)
+
+    print(f"checking prices and costs against {csv_path}\n")
+    worst = 0.0
+    unknown = []
+    for key in sorted(set(billed) | set(logged)):
+        day, model = key
+        b = billed.get(key, {})
+        l = logged.get(key)
+        price = price_for(model)
+        print(f"--- {day}  {model}")
+        if price is None:
+            print(f"    no price known for this model, so nothing to check")
+            unknown.append(model)
+            continue
+        rates = {"inp": price.inp, "out": price.out, "read": price.read,
+                 "write_5m": price.write_5m, "write_1h": price.write_1h}
+        # A day whose logs are missing or predate cache_write cannot say
+        # anything about PRICES: its gap is a known hole in the logs, not a
+        # wrong rate. Counting it would make the report cry wolf on every old
+        # day for ever, which is how a check stops being read.
+        judgeable = l is not None and l.complete
+        print(f"    {'':<12}{'billed':>10}{'from logs':>11}{'diff':>10}")
+        for field, rate in rates.items():
+            bv = b.get(field, 0.0)
+            lv = (getattr(l, field) * rate / 1e6) if l else 0.0
+            if bv == 0 and lv == 0:
+                continue
+            mark = "" if abs(bv - lv) < 0.005 else "   <--"
+            print(f"    {field:<12}{bv:>10.2f}{lv:>11.2f}{lv - bv:>+10.2f}{mark}")
+            if judgeable:
+                worst = max(worst, abs(bv - lv))
+        total_b = sum(b.values())
+        total_l = l.cost(model) if l else 0.0
+        print(f"    {'TOTAL':<12}{total_b:>10.2f}{total_l:>11.2f}"
+              f"{total_l - total_b:>+10.2f}")
+        if l is None:
+            print("    (nothing logged for this day, so only the billed "
+                  "column is real)")
+        elif not l.complete:
+            print("    (some of these runs predate cache_write logging, so "
+                  "the gap is a known\n     hole in the logs and says nothing "
+                  "about the rates)")
+
+        # The health signal, and the only one visible in dollars alone.
+        read_cost, write_cost = b.get("read", 0.0), b.get("write_5m", 0.0)
+        if read_cost or write_cost:
+            if write_cost > read_cost:
+                print(f"    CACHING POOR: ${write_cost:.2f} written against "
+                      f"${read_cost:.2f} read.")
+                print(f"    A healthy run reads back far more than it writes.")
+            else:
+                print(f"    caching healthy: ${read_cost:.2f} read against "
+                      f"${write_cost:.2f} written.")
+
+    grand = sum(sum(v.values()) for v in billed.values())
+    print(f"\nbilled over the whole export: ${grand:,.2f}")
+    if unknown:
+        print(f"no price known for: {', '.join(sorted(set(unknown)))}")
+        return 1
+    if worst < 0.01:
+        print("every rate in PRICES agrees with the bill to the cent, on every "
+              "day whose\nlogs are complete enough to check.")
+        return 0
+    print(f"largest disagreement on a checkable day: ${worst:.2f}. Either the "
+          f"token counts\nare wrong or PRICES is stale. Run the token export "
+          f"through --reconcile: if the\ncounts agree there, it is the price "
+          f"table.")
+    return 1
+
+
 def reconcile(runs: List[Run], csv_path: str, empty: List[str]) -> int:
     """Logs against the bill, side by side, per UTC day and model.
 
@@ -360,6 +501,12 @@ def reconcile(runs: List[Run], csv_path: str, empty: List[str]) -> int:
     as a gap: a run that was not logged, a turn that failed to write, a wrong
     price, or usage from something that is not this project at all.
     """
+    # The console offers two exports and they answer different questions. The
+    # token one checks the logs; the cost one checks PRICES. Dispatch on the
+    # header rather than making the user remember which flag is which.
+    if is_cost_export(csv_path):
+        return reconcile_cost(runs, csv_path)
+
     billed = read_csv(csv_path)
     logged: Dict[Tuple[str, str], Usage] = defaultdict(Usage)
     for run in runs:

@@ -106,7 +106,13 @@ Export the usage CSV from the Anthropic console and:
 
 ```bash
 python tokens.py --reconcile docs/claude_api_tokens_2026_08_14_to_2026_09_12.csv
+python tokens.py --reconcile docs/claude_api_cost_2026_08_14_to_2026_09_12.csv
 ```
+
+There are two exports and they check different things. The **token** one is
+counts and checks the logs. The **cost** one is dollars and checks the price
+table, which is the only thing here the logs cannot contradict. `--reconcile`
+tells them apart by their header, so the same flag takes either.
 
 It prints billed against logged, per UTC day and model, and the difference. A
 caching fault once ran for three days and cost about four times what it should
