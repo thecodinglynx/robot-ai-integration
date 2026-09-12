@@ -133,7 +133,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Read the line sensors over real floors and check the "
                     "cliff stop against them.")
-    ap.add_argument("--host", required=True)
+    ap.add_argument("--host", help="the car's address. Defaults to whatever "
+                                   "CarConfig.from_env resolves, as the other "
+                                   "scripts do")
     ap.add_argument("--samples", type=int, default=SAMPLES)
     args = ap.parse_args()
 
@@ -143,9 +145,12 @@ def main() -> int:
     rows: List[Tuple[str, int, int]] = []
     air: Optional[int] = None
 
+    cfg = CarConfig.from_env(**({"host": args.host} if args.host else {}))
+    print(f"connecting to {cfg.host} ...")
+
     # No safety layer and no motors: this only reads sensors, so there is
     # nothing to stop and nothing to veto.
-    with Car(args.host, CarConfig()) as car:
+    with Car(cfg) as car:
         print(f"{'surface':<22}{'ch0':<12}{'ch1':<12}{'ch2 (cliff)':<12}")
         while True:
             try:
