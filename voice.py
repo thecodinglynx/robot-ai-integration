@@ -298,6 +298,10 @@ class Voice:
         # Lines said while paused are dropped, not held: by the time the person
         # finishes they describe a moment that has passed.
         self.paused = False
+        # Set while a line is actually coming out of the speaker. The ears ask,
+        # so that always-on listening does not transcribe the robot's own voice
+        # and hand it back as an instruction.
+        self.speaking = threading.Event()
         self.spoken = 0
         self._note = on_note
         self._queue: "queue.Queue[Optional[str]]" = queue.Queue(maxsize=depth)
@@ -346,6 +350,7 @@ class Voice:
             if text is None:
                 return
             try:
+                self.speaking.set()
                 self.sink.speak(text)
                 self.spoken += 1
             except Exception as exc:
@@ -355,6 +360,10 @@ class Voice:
                     self._warned = True
                     self._note(f"speech failed, continuing silently: "
                                f"{type(exc).__name__}: {exc}")
+            finally:
+                # In a finally: if this were skipped on an error the ears would
+                # stay deaf for the rest of the run, and nothing would say why.
+                self.speaking.clear()
 
     def close(self, wait: float = 2.0) -> None:
         """Stop speaking and let the worker finish."""

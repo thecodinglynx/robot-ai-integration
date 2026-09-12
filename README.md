@@ -144,9 +144,10 @@ In a run: `--voice-name Zira`, `--voice-rate 240`, `--no-voice`.
 python agent.py --host 192.168.1.211 --persona sarcastic --task "find the ball"
 ```
 
-`plain` (default), `funny`, `serious`, `annoyed`, `sarcastic`. Each picks a
-speaking rate that suits it; `--voice-rate` still overrides. `python
-personas.py` prints them all with examples.
+`plain` (default), `funny`, `serious`, `annoyed`, `sarcastic`. They all speak
+at the same rate, since what carries a character is the words rather than the
+tempo; `--voice-rate` changes it. `python personas.py` prints them all with
+examples.
 
 The separation is deliberate and enforced in the prompt. A persona is a
 speaking style, never a driving style: every one of them carries the same
@@ -183,10 +184,16 @@ python ears.py                                        # check the microphone
 python agent.py --host 192.168.1.211 --listen         # then talk to it
 ```
 
-Press Enter, speak, press Enter again. What you said is transcribed on the
-laptop and reaches the robot on its next turn. `--task` becomes optional: the
-robot waits for you, does what you say, reports back, and waits again, until
-Ctrl+C. Say something new mid-task and it changes course.
+**Say "robot" and then what you want.** The microphone stays open, speech is
+segmented out of the room and transcribed on the laptop, and what you said
+reaches the robot on its next turn. `--task` becomes optional: it waits for
+you, does what you say, reports back, and waits again, until Ctrl+C. Say
+something new mid-task and it changes course.
+
+Anything without the wake word in it is transcribed and thrown away, so
+conversation in the room is not taken as instructions. `--wake none` goes back
+to pressing Enter before and after each instruction, which is worth having in
+a noisy room or when you would rather the microphone were not open.
 
 **Saying "stop", "halt" or "freeze" halts the car straight away**, without
 waiting for the model, and it then refuses to move until you speak again. It
@@ -196,7 +203,8 @@ the real emergency stops.
 The microphone is the laptop's on purpose, not one on the robot: a Bluetooth
 speaker's microphone drops its sound to phone quality while open, a microphone
 on the robot would mostly hear the motors, and it would hear the robot's own
-voice. For the same reason the robot stays quiet while you are talking.
+voice. For that last reason the ears go deaf while the robot is talking, so it
+cannot transcribe itself and obey it.
 
 The speech model downloads once, about 150 MB. `--stt-model tiny.en` is
 quicker, `small.en` more accurate.

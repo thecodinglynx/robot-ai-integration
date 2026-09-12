@@ -754,7 +754,7 @@ def wait_for_words(listener) -> str:
     timeout cannot be interrupted, so Ctrl+C would do nothing until the next
     time someone spoke.
     """
-    print("\nwaiting for you: press Enter, speak, press Enter again")
+    print(f"\nwaiting for you: {listener.prompt}")
     while True:
         said = listener.wait(timeout=0.5)
         if said is not None:
@@ -797,6 +797,12 @@ def main() -> int:
                          "faster-whisper. Saying stop halts the car at once, "
                          "without waiting for the model. Needs `pip install "
                          "sounddevice faster-whisper`")
+    ap.add_argument("--wake", default="robot",
+                    help="wake word, default %(default)s. The microphone "
+                         "stays open and anything without it is transcribed "
+                         "and thrown away, except a stop, which is always "
+                         "obeyed. `--wake none` goes back to pressing Enter "
+                         "before and after each instruction")
     ap.add_argument("--mic", default=None,
                     help="which microphone, matched loosely by name, e.g. "
                          "\"Realtek\". Worth pinning to the laptop's own: "
@@ -896,7 +902,11 @@ def main() -> int:
     listener = None
     if args.listen:
         try:
-            listener = Ears(model=args.stt_model, mic=args.mic)
+            wake = None if args.wake.lower() in ("none", "") else args.wake
+            listener = Ears(model=args.stt_model, mic=args.mic, wake=wake,
+                            # While the robot is talking, hear nothing: its own
+                            # voice is in the same room as the microphone.
+                            busy=voice.speaking.is_set)
         except ListenUnavailable as exc:
             print(f"cannot listen: {exc}")
             return 2

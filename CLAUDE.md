@@ -708,9 +708,10 @@ Durations are capped far below that and `halt()` is verified.
 
 ### Talking to it
 
-`--listen`, added 2026-09-11. Push to talk on the laptop, Enter to start and
-Enter to stop, transcribed locally with faster-whisper (`base.en`, int8, CPU),
-in `ears.py`. What was said is appended to the next user turn as "The person
+`--listen`, added 2026-09-11. Say "robot" and then the instruction. The
+microphone stays open, an energy gate segments speech out of the room, and each
+utterance is transcribed locally with faster-whisper (`base.en`, int8, CPU), in
+`ears.py`. `--wake none` falls back to push to talk, Enter to start and stop. What was said is appended to the next user turn as "The person
 just said: ...". With `--listen` a report means "done, waiting", the turn cap
 applies per instruction, and the session ends at Ctrl+C.
 
@@ -722,6 +723,17 @@ Three decisions worth keeping:
   says anything else. That refusal matters as much as the halt: the model is
   usually mid-thought when the person speaks, and its next call is often a
   drive it decided on before hearing them.
+- **The wake word is matched at the front or the end, not anywhere.** Matching
+  it wherever it fell turned "the robot is quite slow", said to someone else,
+  into an instruction. The gate also judges an utterance by how much of it was
+  above the threshold rather than by its length: with pre-roll in front and the
+  silence that ends it behind, 130 ms of door arrived as a 1.3 second
+  utterance. Both were caught by tests rather than by use.
+- **Always-on listening must not hear the robot.** Its voice is in the same
+  room as the microphone, so `Voice.speaking` is asked before any audio is
+  kept, and whatever was part-heard when it starts talking is discarded rather
+  than stitched across the interruption. Without that it transcribes its own
+  narration and obeys it.
 - **The microphone is the laptop's.** A Bluetooth speaker's microphone only
   works over the phone-call profile, which drops the output to phone quality
   too; a microphone on the robot hears motors; and it would hear the robot.
