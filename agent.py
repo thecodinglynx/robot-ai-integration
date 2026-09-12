@@ -827,12 +827,15 @@ def main() -> int:
                     help="speaking speed in words per minute, around 200 is "
                          "normal. Faster keeps the speech in step with a "
                          "robot that is still moving")
-    ap.add_argument("--keep-frames", type=int, default=3,
-                    help="how many recent photographs stay in the "
-                         "conversation, default %(default)s. Every frame is "
-                         "re-sent on every later turn, so this is the biggest "
-                         "single lever on cost. Older frames describe "
-                         "somewhere the robot no longer is")
+    ap.add_argument("--keep-frames", type=int, default=0,
+                    help="drop all but this many recent photographs from the "
+                         "conversation. OFF by default, and that is a cost "
+                         "decision, not an oversight: pruning rewrites history, "
+                         "which invalidates the prompt cache every turn and "
+                         "costs far more than the frames it removes. A QVGA "
+                         "frame is about 100 tokens, and cached it is 10. Use "
+                         "it only for runs long enough to threaten the context "
+                         "window")
     ap.add_argument("--framesize", default="qvga",
                     choices=sorted(FRAMESIZES),
                     help="camera resolution, default %(default)s. An image "
@@ -982,7 +985,8 @@ def main() -> int:
 
             messages: List[Dict[str, Any]] = [
                 {"role": "user", "content": opening}]
-            totals = {"input": 0, "output": 0, "cache_read": 0}
+            totals = {"input": 0, "output": 0, "cache_read": 0,
+                      "cache_write": 0}
 
             # Without --listen the run ends at a report or at the turn cap, as
             # before. With it, a report means "done, waiting", the cap applies
@@ -1006,11 +1010,25 @@ def main() -> int:
                 response = client.messages.create(
                     model=args.model,
                     max_tokens=8000,
-                    system=system_prompt,
+                    # TWO breakpoints, and the first one is the important
+                    # one. Caching is a prefix match, so the system prompt and
+                    # tools, which never change, can always be reused. They
+                    # need a breakpoint of their own to say so.
+                    #
+                    # Without it, the only breakpoint was the automatic one at
+                    # the end of the messages. That covered the whole prompt,
+                    # matched nothing once the history changed, and left the
+                    # stable head alive only as long as the entry written on
+                    # turn 1: five minutes, about ten turns. Every turn after
+                    # that wrote the entire prompt at 1.25x and read none of
+                    # it back, which is the most expensive way to call this
+                    # API. It cost roughly four times what the same runs
+                    # should have, and nothing in the log said so.
+                    system=[{"type": "text", "text": system_prompt,
+                             "cache_control": {"type": "ephemeral"}}],
                     tools=tools,
-                    # Auto caching: the system prompt and tool list never
-                    # change, and the history only grows at the end, so the
-                    # prefix is reusable every turn.
+                    # And the tail, which hits whenever the history has only
+                    # been appended to since the last turn.
                     cache_control={"type": "ephemeral"},
                     thinking={"type": "adaptive"},
                     output_config={"effort": args.effort},
@@ -1021,6 +1039,11 @@ def main() -> int:
                 totals["output"] += response.usage.output_tokens
                 totals["cache_read"] += getattr(
                     response.usage, "cache_read_input_tokens", 0) or 0
+                # Logged because not logging it hid a fourfold overspend: the
+                # reads looked healthy while every turn was rewriting the whole
+                # prompt behind them.
+                totals["cache_write"] += getattr(
+                    response.usage, "cache_creation_input_tokens", 0) or 0
 
                 said = " ".join(b.text.strip() for b in response.content
                                 if b.type == "text").strip()
@@ -1085,6 +1108,9 @@ def main() -> int:
                             "output": response.usage.output_tokens,
                             "cache_read": getattr(
                                 response.usage, "cache_read_input_tokens", 0),
+                            "cache_write": getattr(
+                                response.usage,
+                                "cache_creation_input_tokens", 0),
                         },
                     })
 
@@ -1096,7 +1122,8 @@ def main() -> int:
                                     "text": heard_text(heard,
                                                        listener.hold.is_set())})
                 messages.append({"role": "user", "content": results})
-                prune_images(messages, args.keep_frames)
+                if args.keep_frames:
+                    prune_images(messages, args.keep_frames)
 
                 if pilot.finished:
                     if not listener:
@@ -1119,10 +1146,18 @@ def main() -> int:
             voice.close(wait=6.0)
 
             print()
-            if totals["input"]:
-                print(f"tokens: {totals['input']:,} in "
-                      f"({totals['cache_read']:,} of them cached), "
+            if totals["input"] or totals["cache_write"]:
+                read, write = totals["cache_read"], totals["cache_write"]
+                share = read / (read + write) if read + write else 0
+                print(f"tokens: {totals['input']:,} uncached in, "
+                      f"{read:,} cache read, {write:,} cache written, "
                       f"{totals['output']:,} out")
+                # A run that reuses its cache reads far more than it writes.
+                # Anything under about half means the prefix is changing.
+                print(f"cache: {share:.0%} of prompt tokens came from cache"
+                      + ("" if share > 0.5 else
+                         "  <- LOW. Something is changing the prompt prefix "
+                         "between turns"))
             if pilot.finished:
                 print(f"the robot reports: {pilot.finished['outcome']}")
                 print(f"  {pilot.finished['summary']}")

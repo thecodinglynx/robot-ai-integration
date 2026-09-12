@@ -1115,11 +1115,38 @@ truncated action makes its own dead reckoning wrong without it ever knowing.
 
 Phases 00 to 06 are done. What is left, roughly in order of value:
 
-- **07 Cost.** Done in part on 2026-09-07: frames default to QVGA and only the
-  newest three stay in the conversation, which cut image tokens on a twenty
-  turn run by about 93%. `--keep-frames` and `--framesize` tune it. Every run
-  prints its token total, so further work here can be measured rather than
-  guessed at.
+- **07 Cost. Prompt caching was broken and it cost about four times.** Found
+  2026-09-11 from the Anthropic dashboard: 8 September's Sonnet runs billed
+  about $2, against an estimate of $0.46 made from the logs. The logs were
+  wrong because they recorded `cache_read_input_tokens` and not
+  `cache_creation_input_tokens`, so the expensive half was invisible.
+
+  Reading `runs/20260908-*/turns.jsonl`, the reads sit at a constant 3,875 for
+  the first eight turns of every run and then go to zero for all the rest.
+  Two faults, and they compound:
+
+  1. **`prune_images` rewrote already-sent history.** Caching is a prefix
+     match, so replacing an older photograph with a placeholder invalidates
+     everything from that point on, every turn.
+  2. **The only breakpoint was the automatic one at the end.** Nothing marked
+     the system prompt and tool definitions, which never change, so that stable
+     head survived only as the entry written on turn 1 and expired at the
+     five-minute TTL: about ten turns, which is exactly where the reads stop.
+
+  After that every turn wrote the whole growing prompt at 1.25x and read none
+  of it back.
+
+  Fixed: an explicit breakpoint on the system prompt, and `--keep-frames` now
+  defaults to **0**, off. Keeping the frames is far cheaper than the cache
+  invalidation that removing them causes, because a QVGA frame is about 100
+  tokens and a cached one is 10. Prune only to protect the context window.
+
+  Every run now prints reads against writes and says so when the share is low.
+  **A cache hit rate is a number to watch, not to assume**, and an estimate
+  built from a log that only records the cheap half will always look fine.
+
+  Earlier, and still true: frames default to QVGA, which cut image tokens on a
+  twenty turn run by about 93%. `--framesize` tunes it.
 - [x] **08 Model comparison. Done 2026-09-08: Sonnet 5 at low effort is the
   default.** It scans first, computes its turns from the head's pan offset,
   corrects an overshoot and knows when it has arrived, at about a third of the
