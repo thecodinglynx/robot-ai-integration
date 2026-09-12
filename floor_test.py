@@ -34,6 +34,17 @@ Put the car on each surface in turn, wheels down, sitting normally. Then hold
 it in the air for the no-floor reading, which is the one everything is measured
 against. It reads all three channels, unlike the hot path, which reads only
 channel 2 to stay inside the serial link's budget.
+
+**Measure a patterned surface in several places.** On 2026-09-11 a rug read 732
+on one spot and 953 on a darker part of the same pattern, and only the second
+one explains the stop that prompted this script. One reading per surface is one
+reading, not a survey.
+
+**And measure a REAL edge, not just the car in the air.** Empty space returns
+nothing; a staircase has a tread 20 cm down and a table has a floor below, both
+of which send something back. Every no-floor figure in CLAUDE.md is the car
+held up, which may well be the easy case. Hold the car with its front
+overhanging the actual drop and name that as a surface.
 """
 
 from __future__ import annotations
@@ -46,6 +57,23 @@ from typing import Dict, List, Optional, Tuple
 from elegoo import Car, CarConfig, CarError, CLIFF_CHANNEL, CLIFF_THRESHOLD
 
 SAMPLES = 12
+
+# Printed whenever a surface fails. It deliberately does not recommend raising
+# the threshold, and is careful about the multi-channel idea, because the
+# 2026-09-11 survey showed both are worse than they look. See CLAUDE.md phase 09.
+ADVICE = '''Do not simply raise the threshold. The two failure directions are
+not symmetric: a false stop is an annoyance you notice at once, a missed edge
+puts the car on the floor below. Raising the threshold buys the first at the
+cost of the second.
+
+Adding a second channel, so a stop needs two of them to agree, is the
+better-looking fix and carries the same risk in a subtler form: any AND rule
+can only ever make the stop LESS likely to fire. Before trusting one, measure a
+real edge on all three channels, because every no-floor number this project has
+is the car held in the air, and empty space is the easy case.
+
+The reliable answer meanwhile is to keep the car off the surfaces that trip
+it.'''
 
 
 def sample(car: Car, samples: int = SAMPLES) -> Dict[int, List[int]]:
@@ -119,11 +147,7 @@ def verdict(rows: List[Tuple[str, int, int]], air: Optional[int]) -> int:
         bad = True
 
     if bad:
-        print("\nDo not simply raise the threshold. The two failures are not "
-              "symmetric:\na false stop is an annoyance, a missed edge puts "
-              "the car on the floor\nbelow. Consider keeping the car off the "
-              "surfaces that trip it, or using\nmore than one channel so a "
-              "single dark patch cannot stop the car.")
+        print("\n" + ADVICE)
         return 1
     print("\nThe threshold holds on every surface tested.")
     return 0

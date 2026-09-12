@@ -802,7 +802,16 @@ calibration run the same day. What is left, in the order it blocks things:
 9. **Battery voltage over the wire.** A3 has the divider but no stock command
    exposes the reading. Adding one is a small UNO firmware change and is worth
    doing early.
-10. **Why prompt cache reads stopped at turn 9 of every run.** The head read
+10. **What a REAL edge reads, on all three channels.** Every no-floor figure
+   in this file is the car held in the air, which is the easy case: empty
+   space returns nothing at all. A staircase has a tread 20 cm below and a
+   table has a floor further down, both of which return some signal. The cliff
+   threshold, and any future multi-channel rule, is calibrated against a case
+   that may be more generous than reality. Hold the car with its front
+   overhanging the actual staircase and run `floor_test.py`. **This is the
+   highest-value unanswered question on the list**, because it is the only one
+   whose failure mode is the car on the floor below.
+11. **Why prompt cache reads stopped at turn 9 of every run.** The head read
    held at exactly 3,875 tokens and then went to zero, at 12 to 13 accumulated
    frames and about 49 seconds, which rules out the five-minute TTL. Both known
    faults are fixed, so this may simply not recur; the test is a run long
@@ -1251,11 +1260,54 @@ Phases 00 to 06 are done. What is left, roughly in order of value:
 
   The next trip will answer it regardless, because `cliff_raw` is logged now.
 
-  **What the survey did settle**: channels 0 and 1 are unusable as cliff
-  detectors on this rug, with only 155 and 148 counts between rug and no floor
-  against channel 2's 289. Using more than one channel to make a false stop
-  harder is therefore not available as a fix, which is worth knowing before
-  reaching for it.
+  **Then the patterned rug was measured spot by spot, and hypothesis 1 was
+  right.** Same day, `floor_test.py`:
+
+  | surface | ch0 | ch1 | ch2 (cliff) |
+  | --- | --- | --- | --- |
+  | Brown hardwood | 381 | 42 | 41 |
+  | Rug, bright part | 641 | 45 | 230 |
+  | Rug, plain part | 862 | 585 | 732 |
+  | **Rug, dark part** | **990** | **473** | **953** |
+  | Rug to hardwood edge | 396 | 81 | 46 |
+  | Held in the air | 1016 | 732 | 1020 |
+
+  **A dark patch of this rug reads 953 against no floor at all at 1020. Sixty
+  seven counts.** That is 6% of the scale. The turn-2 stop is explained: the
+  car was over a dark part of the pattern and the cliff stop was, by its own
+  rule, correct.
+
+  **No threshold on channel 2 alone can separate them**, and that is the real
+  finding. 900 false-stops on the dark patch; anything above 953 leaves under
+  67 counts to catch a real edge. This is not a tuning problem.
+
+  **Correction to the entry above, which was wrong.** It said channels 0 and 1
+  are unusable and "voting across channels is therefore not available as a
+  fix". That was concluded from the plain part of the rug, before the dark part
+  was measured, and the dark part reverses it. On the patch where channel 2
+  fails, **channel 1 separates cleanly: 473 against 732, a 259 count gap**. Its
+  worst floor reading anywhere is the plain rug at 585, still 147 below air.
+
+  So a rule of "channel 2 high AND channel 1 high" would hold on every surface
+  measured so far. **It is deliberately NOT implemented**, for two reasons that
+  matter more than the elegance:
+
+  1. **An AND rule can only ever make the stop less likely to fire**, and the
+     two failure directions are not symmetric. It trades a nuisance for the
+     catastrophic one.
+  2. **A real edge has never been measured.** Every no-floor number in this
+     file, today's included, is the car *held in the air*. A stair edge with a
+     tread 20 cm below may return far more signal than empty space, and the
+     whole AND rule rests on channel 1 reading high there. Nothing yet says
+     it does.
+
+  It would also cost serial budget: distance plus two line channels at 8 Hz is
+  792 B/s, **82% of the 960 B/s link**, against the 55% the current poll uses.
+  6 Hz brings it back to 62%.
+
+  **So the next measurement is the real staircase**, with the car held by hand
+  and its front overhanging, not driven there. Until that exists, keep the car
+  off the dark rug rather than widening the rule that protects it.
 - **10 Battery over the wire.** A3 has the divider and no stock command exposes
   it. Five lines of UNO firmware, `analogRead(A3) * 0.0375 * 1.08`. Worth
   bundling with widening the servo tilt clamp, since both need the same flash.
