@@ -802,6 +802,11 @@ calibration run the same day. What is left, in the order it blocks things:
 9. **Battery voltage over the wire.** A3 has the divider but no stock command
    exposes the reading. Adding one is a small UNO firmware change and is worth
    doing early.
+10. **Why prompt cache reads stopped at turn 9 of every run.** The head read
+   held at exactly 3,875 tokens and then went to zero, at 12 to 13 accumulated
+   frames and about 49 seconds, which rules out the five-minute TTL. Both known
+   faults are fixed, so this may simply not recur; the test is a run long
+   enough to pass both thresholds with the hit rate still high. See phase 07.
 
 ## Step 03, done
 
@@ -1129,12 +1134,28 @@ Phases 00 to 06 are done. What is left, roughly in order of value:
      match, so replacing an older photograph with a placeholder invalidates
      everything from that point on, every turn.
   2. **The only breakpoint was the automatic one at the end.** Nothing marked
-     the system prompt and tool definitions, which never change, so that stable
-     head survived only as the entry written on turn 1 and expired at the
-     five-minute TTL: about ten turns, which is exactly where the reads stop.
+     the system prompt and tool definitions, which never change, so the only
+     thing ever read back was that head, and nothing else could be.
 
   After that every turn wrote the whole growing prompt at 1.25x and read none
   of it back.
+
+  **Correction, 2026-09-11, before any of this was tested.** The first version
+  of this entry said the head expired at the five-minute cache TTL, "about ten
+  turns, which is exactly where the reads stop". The arithmetic does not
+  support it. Turns take a median of **4.6 seconds**, so turn 9 of run
+  `20260908-215355` is **49 seconds** in, not five minutes. Five minutes is
+  about 65 turns, and no run has ever been that long.
+
+  So fault 1 is established: reads sat at a constant 3,875, exactly the size of
+  the head, which is what "history is rewritten every turn" looks like. **Why
+  even the head stops matching at turn 9 is NOT known**, and is now an open
+  question rather than a cause. What is known is that it happens at 12 to 13
+  accumulated frames rather than at any particular elapsed time.
+
+  That mistake is the one this file keeps recording: a mechanism that fitted
+  the shape of the data, stated as a finding without checking the one number
+  that would have falsified it.
 
   Fixed: an explicit breakpoint on the system prompt, and `--keep-frames` now
   defaults to **0**, off. Keeping the frames is far cheaper than the cache
